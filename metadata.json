@@ -1,0 +1,6 @@
+{
+  "name": "NovaCut Studio",
+  "description": "Editor de vídeo profissional completo no navegador com timeline multi-trilhas, efeitos em tempo real, IA mágica, edição de áudio e exportação.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
