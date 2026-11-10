@@ -7,7 +7,16 @@ import {
   validateAndNormalizeScenePlan,
 } from './cinematicDirector';
 import { generateChoreographyForScene, resolveActiveBeatState } from './choreographyEngine';
-import { calculateLimbAngles, blendLimbAngles } from './stickmanMath';
+import {
+  calculateLimbAngles,
+  blendLimbAngles,
+  solveTwoBoneIK,
+  resolveBiomechanicalHumanPose,
+  getSceneAnchors,
+  minimumJerkEase,
+  organicPerlin1D,
+  getProsodicSpeechEnvelope,
+} from './stickmanMath';
 import { StickmanScene } from '../types/stickman';
 
 test('1. Plan validation and safe fallback: contextual action selection (never hardcoded by idx) and malformed JSON recovery', () => {
@@ -240,7 +249,7 @@ test('4. Contextual motion variation: two scenes with the same action but differ
   );
 });
 
-test('5. Backward compatibility with legacy scenes that have no scenePlan or seed', () => {
+test('5. Backward compatibility with existing legacy scenes that have no scenePlan or seed', () => {
   const legacyScene: StickmanScene = {
     id: 'legacy_01',
     title: 'Cena Antiga Sem Plano',
@@ -269,3 +278,107 @@ test('5. Backward compatibility with legacy scenes that have no scenePlan or see
   const legacyAngles = calculateLimbAngles(legacyScene.character1.action, 0.4, true);
   assert.ok(!Number.isNaN(legacyAngles.leftArmUpper), 'Legacy 3-arg calculateLimbAngles call remains compatible');
 });
+
+test('6. Biomechanical 2-Bone Analytical IK, Foot-Planting & SceneAnchors accuracy', () => {
+  // Verify 2-bone IK preserves exact segment lengths and reaches target within reach radius
+  const ik = solveTwoBoneIK(0, -72, 16, -2, 38, 38, 1);
+  const len1 = Math.hypot(ik.midX - 0, ik.midY - -72);
+  const len2 = Math.hypot(ik.endX - ik.midX, ik.endY - ik.midY);
+
+  assert.ok(Math.abs(len1 - 38) < 1e-6, 'Upper bone length is invariant');
+  assert.ok(Math.abs(len2 - 38) < 1e-6, 'Lower bone length is invariant');
+  assert.ok(Math.abs(ik.endX - 16) < 0.5, 'IK end effector X reaches target X');
+  assert.ok(Math.abs(ik.endY - -2) < 0.5, 'IK end effector Y reaches ground plane target Y');
+
+  // Verify grounded stance plants feet on ground plane (ankleY <= 0) even with heavy weightShift
+  const angles = calculateLimbAngles('talk_explaining', 0.5, true, 2.2, 0.5, 'none', 1, {
+    seed: 4242,
+    intensity: 0.85,
+    anticipation: 0.6,
+    reaction: 0.7,
+    settle: 0.5,
+    weightShift: 0.6,
+  });
+  const pose = resolveBiomechanicalHumanPose(angles, 'talk_explaining', 0.5, 2.2, 0.5, 0.05, {
+    seed: 4242,
+    weightShift: 0.6,
+  });
+
+  assert.ok(pose.leftLeg.ankleY <= 0.1, 'Left ankle never penetrates below ground plane');
+  assert.ok(pose.rightLeg.ankleY <= 0.1, 'Right ankle never penetrates below ground plane');
+  assert.ok(pose.leftLeg.planted || pose.rightLeg.planted, 'Grounded stance plants stance feet');
+
+  // Verify SceneAnchors returns valid groundY and interaction anchor
+  const zombieAnchors = getSceneAnchors('zombie_apocalypse', 1280, 720);
+  assert.equal(zombieAnchors.groundY, 720 * 0.72);
+  assert.equal(zombieAnchors.interactionAnchor?.type, 'barricade');
+});
+
+test('7. Minimum-Jerk C2 trajectories, 1D Perlin postural noise, Prosodic speech envelope & 2.5D foreshortening', () => {
+  // 1. Minimum-jerk boundary conditions: f(0)=0, f(0.5)=0.5, f(1)=1, strictly monotonic
+  assert.equal(minimumJerkEase(0), 0);
+  assert.ok(Math.abs(minimumJerkEase(0.5) - 0.5) < 1e-9);
+  assert.equal(minimumJerkEase(1), 1);
+  assert.ok(minimumJerkEase(0.25) < 0.25, 'Minimum-jerk eases in smoothly');
+  assert.ok(minimumJerkEase(0.75) > 0.75, 'Minimum-jerk eases out smoothly');
+
+  // 2. Deterministic 1D Perlin noise stays within [-1, 1] and is 100% reproducible
+  for (let i = 0; i <= 20; i++) {
+    const x = i * 0.37;
+    const n1 = organicPerlin1D(x, 12345);
+    const n2 = organicPerlin1D(x, 12345);
+    assert.equal(n1, n2, 'Perlin noise is strictly deterministic');
+    assert.ok(n1 >= -1 && n1 <= 1, 'Perlin noise stays within [-1, 1]');
+  }
+
+  // 3. Prosodic Speech Envelope detects active syllable pulse vs punctuation pause window
+  const narration = 'Atenção imediata! O sistema entrou em colapso.';
+  const envSpeaking = getProsodicSpeechEnvelope(narration, 0.08, 155);
+  assert.ok(envSpeaking.syllablePulse > 0, 'Active word produces positive syllable pulse');
+  assert.equal(envSpeaking.isBreathPause, false, 'Early word progress is not in breath pause window');
+
+  // 4. 2.5D foreshortening narrows shoulder span during 3/4 turn (facingCos = 0.35 vs facingCos = 1.0)
+  const baseAngles = calculateLimbAngles('talk_explaining', 0.4, true, 1.8, 0.4, 'none', 0, {
+    seed: 999,
+  });
+  const poseFull = resolveBiomechanicalHumanPose(
+    baseAngles,
+    'talk_explaining',
+    0.4,
+    1.8,
+    0.4,
+    0,
+    { seed: 999 },
+    undefined,
+    envSpeaking,
+    1.0
+  );
+  const poseTurn = resolveBiomechanicalHumanPose(
+    baseAngles,
+    'talk_explaining',
+    0.4,
+    1.8,
+    0.4,
+    0,
+    { seed: 999 },
+    undefined,
+    envSpeaking,
+    0.35
+  );
+
+  const spanFull = Math.hypot(
+    poseFull.rightShoulderX - poseFull.leftShoulderX,
+    poseFull.rightShoulderY - poseFull.leftShoulderY
+  );
+  const spanTurn = Math.hypot(
+    poseTurn.rightShoulderX - poseTurn.leftShoulderX,
+    poseTurn.rightShoulderY - poseTurn.leftShoulderY
+  );
+  assert.ok(spanTurn < spanFull, '2.5D yaw foreshortening narrows bi-deltoid shoulder span during turn');
+  assert.ok(
+    typeof poseFull.rightArm.thumbX === 'number' && typeof poseFull.rightArm.fingerX === 'number',
+    'Articulated hand resolves thumb and finger coordinates'
+  );
+});
+
+

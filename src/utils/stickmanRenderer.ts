@@ -13,7 +13,13 @@ import {
   blendLimbAngles,
   calculateCameraTransform,
   getActiveWordIndexAtProgress,
+  getProsodicSpeechEnvelope,
+  ProsodicSpeechEnvelope,
   MotionVariationContext,
+  getSceneAnchors,
+  resolveBiomechanicalHumanPose,
+  solveTwoBoneIK,
+  SceneAnchorMap,
 } from './stickmanMath';
 import { resolveActiveBeatState } from './choreographyEngine';
 
@@ -40,6 +46,7 @@ export function renderStickmanFrame({
   ctx.clearRect(0, 0, width, height);
 
   const beatState = resolveActiveBeatState(scene, sceneProgress);
+  const sceneAnchors = getSceneAnchors(scene.environment, width, height);
 
   ctx.save();
   const activeCamera = beatState.effectiveCamera || scene.cameraEffect;
@@ -52,8 +59,19 @@ export function renderStickmanFrame({
   ctx.scale(effectiveZoom, effectiveZoom);
   ctx.translate(-centerX, -centerY);
 
-  // 1. Draw Rich Background Environment
+  // 1. Draw Rich Multi-Layered Background Environment
   drawEnvironment(ctx, width, height, scene.environment, sceneProgress);
+
+  // 1.25 Draw Realistic Ground Texture, Horizon Depth Haze & Specular Light Reflection
+  drawRealisticGroundAndDepthLayer(
+    ctx,
+    width,
+    height,
+    scene.environment,
+    sceneAnchors,
+    sceneProgress,
+    beatState.elapsedInSceneSec
+  );
 
   // 1.5 Draw Living Environmental Simulation (Autonomous People, Objectives & Physics)
   drawEnvironmentalSimulation(
@@ -83,8 +101,8 @@ export function renderStickmanFrame({
     drawSpeedLines(ctx, width, height, sceneProgress);
   }
 
-  // 3. Draw Characters & Vehicles with Fluid Multi-Harmonic Kinematics
-  const groundY = height * 0.72;
+  // 3. Draw Characters & Vehicles with Biomechanical 2-Bone IK & Foot-Planting
+  const groundY = sceneAnchors.groundY;
   const isVehicleAction =
     beatState.effectiveAction1 === 'drive_car' ||
     beatState.effectiveAction1 === 'car_chase' ||
@@ -113,6 +131,10 @@ export function renderStickmanFrame({
     weightShift: beatState.weightShift,
   };
 
+  const prosodicEnvelope: ProsodicSpeechEnvelope | undefined = isSpeaking
+    ? getProsodicSpeechEnvelope(scene.narration || '', sceneProgress, wpm)
+    : undefined;
+
   if (isVehicleAction) {
     // Draw Vehicle with Stickman inside with dynamic lane swerving and nitro
     const vehicleX = width * beatState.char1XNorm;
@@ -131,7 +153,8 @@ export function renderStickmanFrame({
       beatState.elapsedInSceneSec,
       beatState.beatProgress,
       beatState.beatIndex,
-      motionCtx1
+      motionCtx1,
+      prosodicEnvelope
     );
 
     // If there is an opponent / police car in scene
@@ -157,7 +180,7 @@ export function renderStickmanFrame({
       );
     }
   } else {
-    // Standard Character 1 with loose multi-joint kinematics, pose blending, and acrobatic maneuvers
+    // Standard Character 1 with 2-bone IK foot-planting, anatomical spine, prosodic gestures, and scene anchor interaction
     const char1X = width * beatState.char1XNorm;
     const char1Y = groundY + beatState.jumpOffsetY;
 
@@ -177,7 +200,10 @@ export function renderStickmanFrame({
       beatState.prevAction1,
       beatState.transitionBlend,
       beatState.velocityX,
-      motionCtx1
+      motionCtx1,
+      sceneAnchors,
+      prosodicEnvelope,
+      beatState.facingCos1
     );
 
     // Optional Character 2
@@ -208,7 +234,8 @@ export function renderStickmanFrame({
           reaction: beatState.reaction,
           settle: beatState.settle,
           weightShift: -beatState.weightShift,
-        }
+        },
+        sceneAnchors
       );
     }
 
@@ -227,6 +254,17 @@ export function renderStickmanFrame({
       drawImpactEffects(ctx, contactX, groundY - 60, sceneProgress);
     }
   }
+
+  // 3.5 Draw Atmospheric Weather, Volumetric Lighting & Foreground Depth Pass from CinematicScenePlan
+  drawAtmosphericRealismLayer(
+    ctx,
+    width,
+    height,
+    scene,
+    sceneAnchors,
+    sceneProgress,
+    beatState.elapsedInSceneSec
+  );
 
   // Floating VFX Icon (follows character dynamically)
   const activeIcon = beatState.effectiveIcon || scene.floatingIcon;
@@ -953,7 +991,330 @@ function drawEnvironment(
       ctx.stroke();
       break;
     }
+
+    case 'space_station': {
+      // Orbital observation deck overlooking Earth curvature & starfield
+      const spaceGrad = ctx.createLinearGradient(0, 0, 0, groundY);
+      spaceGrad.addColorStop(0, '#02040A');
+      spaceGrad.addColorStop(0.7, '#061024');
+      spaceGrad.addColorStop(1, '#0C1E3E');
+      ctx.fillStyle = spaceGrad;
+      ctx.fillRect(0, 0, width, height);
+
+      // Stars
+      ctx.fillStyle = '#E2E8F0';
+      for (let i = 0; i < 36; i++) {
+        const sx = ((i * 173) % width);
+        const sy = ((i * 89) % (groundY - 40));
+        ctx.fillRect(sx, sy, i % 3 === 0 ? 2 : 1.2, i % 3 === 0 ? 2 : 1.2);
+      }
+
+      // Earth horizon glow outside viewport window
+      const planetGrad = ctx.createRadialGradient(
+        width * 0.5,
+        groundY + 260,
+        180,
+        width * 0.5,
+        groundY + 260,
+        420
+      );
+      planetGrad.addColorStop(0, 'rgba(56, 189, 248, 0.55)');
+      planetGrad.addColorStop(0.5, 'rgba(14, 165, 233, 0.18)');
+      planetGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = planetGrad;
+      ctx.beginPath();
+      ctx.arc(width * 0.5, groundY + 260, 420, Math.PI, Math.PI * 2);
+      ctx.fill();
+
+      // Reinforced titanium deck floor
+      ctx.fillStyle = '#0F172A';
+      ctx.fillRect(0, groundY, width, height - groundY);
+      ctx.strokeStyle = '#38BDF8';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.moveTo(0, groundY);
+      ctx.lineTo(width, groundY);
+      ctx.stroke();
+      break;
+    }
+
+    case 'traffic_jam': {
+      // Urban rush-hour overpass with multi-lane headlights & smog haze
+      const sky = ctx.createLinearGradient(0, 0, 0, groundY);
+      sky.addColorStop(0, '#18181B');
+      sky.addColorStop(0.6, '#3F3F46');
+      sky.addColorStop(1, '#713F12');
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, width, groundY);
+
+      // Distant cars queued on highway
+      for (let i = 0; i < 8; i++) {
+        const cx = 40 + i * (width / 8) + Math.sin(progress * 2 + i) * 4;
+        ctx.fillStyle = i % 2 === 0 ? '#1E293B' : '#334155';
+        ctx.fillRect(cx, groundY - 26, 54, 22);
+        ctx.fillStyle = '#EF4444';
+        ctx.fillRect(cx + 2, groundY - 18, 8, 6);
+        ctx.fillRect(cx + 44, groundY - 18, 8, 6);
+      }
+
+      ctx.fillStyle = '#18181B';
+      ctx.fillRect(0, groundY, width, height - groundY);
+      break;
+    }
+
+    case 'secret_lab': {
+      // High-tech containment laboratory with bioluminescent stasis pods
+      ctx.fillStyle = '#051016';
+      ctx.fillRect(0, 0, width, height);
+
+      for (let i = 0; i < 3; i++) {
+        const px = width * (0.24 + i * 0.26);
+        const podGrad = ctx.createLinearGradient(px - 28, groundY - 175, px + 28, groundY - 20);
+        podGrad.addColorStop(0, 'rgba(6, 182, 212, 0.35)');
+        podGrad.addColorStop(1, 'rgba(16, 185, 129, 0.12)');
+        ctx.fillStyle = podGrad;
+        ctx.fillRect(px - 28, groundY - 175, 56, 155);
+        ctx.strokeStyle = '#22D3EE';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(px - 28, groundY - 175, 56, 155);
+      }
+
+      ctx.fillStyle = '#0B1724';
+      ctx.fillRect(0, groundY, width, height - groundY);
+      break;
+    }
+
+    case 'interrogation_room': {
+      // Noir concrete interrogation room with overhead pendant lamp & two-way mirror
+      ctx.fillStyle = '#0C0F14';
+      ctx.fillRect(0, 0, width, height);
+
+      // Two-way mirror on back wall
+      ctx.fillStyle = 'rgba(30, 41, 59, 0.65)';
+      ctx.fillRect(width * 0.22, groundY - 185, width * 0.56, 110);
+      ctx.strokeStyle = '#475569';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(width * 0.22, groundY - 185, width * 0.56, 110);
+
+      // Overhead swinging lamp cone
+      const swing = Math.sin(progress * Math.PI * 2) * 18;
+      const cone = ctx.createRadialGradient(
+        width * 0.5 + swing,
+        groundY - 95,
+        15,
+        width * 0.5 + swing,
+        groundY - 95,
+        width * 0.38
+      );
+      cone.addColorStop(0, 'rgba(254, 240, 138, 0.32)');
+      cone.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = cone;
+      ctx.fillRect(0, 0, width, groundY);
+
+      ctx.fillStyle = '#141820';
+      ctx.fillRect(0, groundY, width, height - groundY);
+      break;
+    }
   }
+}
+
+/**
+ * Adds realistic tactile ground perspective lines, horizon aerial depth haze,
+ * and dynamic specular ground reflections driven by `SceneAnchorMap`.
+ */
+function drawRealisticGroundAndDepthLayer(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  env: EnvironmentTheme,
+  anchors: SceneAnchorMap,
+  progress: number,
+  elapsedSec: number
+) {
+  if (env === 'sketch_grid') return;
+
+  const groundY = anchors.groundY;
+  const t = elapsedSec > 0 ? elapsedSec : progress * 5;
+
+  ctx.save();
+
+  // 1. Aerial Perspective Horizon Depth Mist (separates background architecture from foreground actors)
+  const horizonMist = ctx.createLinearGradient(0, groundY - 95, 0, groundY + 18);
+  horizonMist.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  horizonMist.addColorStop(0.75, anchors.lightSource.ambientTint);
+  horizonMist.addColorStop(1, 'rgba(15, 23, 42, 0.42)');
+  ctx.fillStyle = horizonMist;
+  ctx.fillRect(0, groundY - 95, width, 113);
+
+  // 2. Ground Plane Depth Gradient & Tactile Perspective Lines
+  const groundGrad = ctx.createLinearGradient(0, groundY, 0, height);
+  groundGrad.addColorStop(0, 'rgba(15, 23, 42, 0.15)');
+  groundGrad.addColorStop(0.35, 'rgba(9, 13, 22, 0.48)');
+  groundGrad.addColorStop(1, 'rgba(2, 6, 14, 0.85)');
+  ctx.fillStyle = groundGrad;
+  ctx.fillRect(0, groundY, width, height - groundY);
+
+  // Perspective pavement / floor seams converging toward horizon center
+  ctx.strokeStyle = 'rgba(148, 163, 184, 0.11)';
+  ctx.lineWidth = 1;
+  const vanishX = width * 0.5;
+  const scrollOffset =
+    env === 'highway_sunset' || env === 'police_chase_night' || env === 'cyber_highway'
+      ? ((t * 120) % 90)
+      : 0;
+
+  for (let i = -6; i <= 6; i++) {
+    const baseX = vanishX + i * 95 - scrollOffset;
+    ctx.beginPath();
+    ctx.moveTo(baseX, groundY);
+    ctx.lineTo(vanishX + (baseX - vanishX) * 2.35, height);
+    ctx.stroke();
+  }
+
+  // Horizontal depth strips on the ground plane
+  const stripOffsets = [10, 26, 48, 78, 116];
+  for (const dy of stripOffsets) {
+    if (groundY + dy >= height) continue;
+    ctx.beginPath();
+    ctx.moveTo(0, groundY + dy);
+    ctx.lineTo(width, groundY + dy);
+    ctx.stroke();
+  }
+
+  // 3. Specular Ground Light Pool below primary light source
+  const lightPool = ctx.createRadialGradient(
+    anchors.lightSource.x,
+    groundY + 18,
+    8,
+    anchors.lightSource.x,
+    groundY + 18,
+    width * 0.34
+  );
+  lightPool.addColorStop(0, anchors.lightSource.ambientTint);
+  lightPool.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = lightPool;
+  ctx.fillRect(0, groundY, width, height - groundY);
+
+  // Crisp curb / ground rim highlight line
+  ctx.strokeStyle = 'rgba(226, 232, 240, 0.22)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(0, groundY + 1);
+  ctx.lineTo(width, groundY + 1);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+/**
+ * Executes `scene.scenePlan.environmentPlan` weather, atmosphere, and lightingMood
+ * directly on the Canvas 2D context (rain + splashes, volumetric fog, crepuscular rays,
+ * bioluminescent glow, and foreground depth silhouettes).
+ */
+function drawAtmosphericRealismLayer(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  scene: StickmanScene,
+  anchors: SceneAnchorMap,
+  progress: number,
+  elapsedSec: number
+) {
+  const envPlan = scene.scenePlan?.environmentPlan;
+  const weather = envPlan?.weatherOrAtmosphere || 'clear';
+  const lightingMood = envPlan?.lightingMood || 'neutral';
+  const groundY = anchors.groundY;
+  const t = elapsedSec > 0 ? elapsedSec : progress * 5;
+
+  ctx.save();
+
+  // 1. Directional Volumetric Lighting Mood (God-rays / Bioluminescence / Cold Noir / Strobe)
+  if (lightingMood === 'warm_golden' || scene.environment === 'highway_sunset') {
+    const rayGrad = ctx.createLinearGradient(
+      anchors.lightSource.x,
+      anchors.lightSource.y,
+      width * 0.3,
+      groundY
+    );
+    rayGrad.addColorStop(0, 'rgba(253, 224, 71, 0.16)');
+    rayGrad.addColorStop(1, 'rgba(251, 146, 60, 0.0)');
+    ctx.fillStyle = rayGrad;
+    ctx.beginPath();
+    ctx.moveTo(anchors.lightSource.x - 40, 0);
+    ctx.lineTo(anchors.lightSource.x + 90, 0);
+    ctx.lineTo(width * 0.85, groundY);
+    ctx.lineTo(width * 0.12, groundY);
+    ctx.closePath();
+    ctx.fill();
+  } else if (lightingMood === 'bioluminescent' || weather === 'neon_haze') {
+    const bioGrad = ctx.createRadialGradient(
+      anchors.lightSource.x,
+      groundY - 90,
+      15,
+      anchors.lightSource.x,
+      groundY - 90,
+      width * 0.42
+    );
+    bioGrad.addColorStop(0, 'rgba(16, 185, 129, 0.14)');
+    bioGrad.addColorStop(0.6, 'rgba(6, 182, 212, 0.06)');
+    bioGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+    ctx.fillStyle = bioGrad;
+    ctx.fillRect(0, 0, width, height);
+  } else if (lightingMood === 'cold_noir' || lightingMood === 'high_contrast') {
+    const rimGrad = ctx.createLinearGradient(0, 0, 0, height);
+    rimGrad.addColorStop(0, 'rgba(15, 23, 42, 0.24)');
+    rimGrad.addColorStop(0.5, 'rgba(0, 0, 0, 0)');
+    rimGrad.addColorStop(1, 'rgba(2, 6, 23, 0.32)');
+    ctx.fillStyle = rimGrad;
+    ctx.fillRect(0, 0, width, height);
+  }
+
+  // 2. Weather & Atmospheric Particles
+  if (weather === 'rain') {
+    ctx.strokeStyle = 'rgba(186, 230, 253, 0.38)';
+    ctx.lineWidth = 1.4;
+    for (let i = 0; i < 42; i++) {
+      const rx = ((i * 97 + t * 240) % (width + 80)) - 40;
+      const ry = ((i * 61 + t * 560) % (groundY + 20));
+      ctx.beginPath();
+      ctx.moveTo(rx, ry);
+      ctx.lineTo(rx - 9, ry + 22);
+      ctx.stroke();
+
+      // Ground puddle splash ripple
+      if (ry > groundY - 18) {
+        const rippleR = ((t * 18 + i) % 8) + 2;
+        ctx.strokeStyle = 'rgba(186, 230, 253, 0.24)';
+        ctx.beginPath();
+        ctx.ellipse(rx, groundY + 4 + (i % 3) * 4, rippleR * 1.8, rippleR * 0.45, 0, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+  } else if (weather === 'fog' || weather === 'toxic_mist') {
+    const mistColor =
+      weather === 'toxic_mist'
+        ? 'rgba(74, 222, 128, 0.09)'
+        : 'rgba(203, 213, 225, 0.09)';
+    ctx.fillStyle = mistColor;
+    for (let b = 0; b < 3; b++) {
+      const bandX = Math.sin(t * 0.35 + b * 1.7) * 45;
+      const bandY = groundY - 38 + b * 16;
+      ctx.beginPath();
+      ctx.ellipse(width * 0.5 + bandX, bandY, width * 0.55, 22 + b * 5, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else if (weather === 'smoke_ash') {
+    for (let i = 0; i < 18; i++) {
+      const ax = ((i * 113 + Math.sin(t * 1.5 + i) * 28) % width);
+      const ay = groundY - ((t * 48 + i * 37) % (groundY * 0.85));
+      ctx.fillStyle = i % 3 === 0 ? 'rgba(251, 146, 60, 0.55)' : 'rgba(148, 163, 184, 0.25)';
+      ctx.beginPath();
+      ctx.arc(ax, ay, i % 3 === 0 ? 2.2 : 3.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  ctx.restore();
 }
 
 /**
@@ -1309,6 +1670,12 @@ function drawAutonomousMiniAgent(
   ctx.translate(x, groundY);
   ctx.scale(scale, scale);
 
+  // Ground contact shadow under autonomous agent
+  ctx.fillStyle = 'rgba(2, 6, 23, 0.34)';
+  ctx.beginPath();
+  ctx.ellipse(0, 2, 18, 4.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
   // Draw floating objective badge above agent
   ctx.save();
   ctx.font = 'bold 14px "JetBrains Mono", monospace';
@@ -1327,73 +1694,83 @@ function drawAutonomousMiniAgent(
     ctx.scale(-1, 1);
   }
 
-  // Controlled walk cycle
-  const cycle = timeSec * 2.4;
-  const stepL = Math.sin(cycle) * 0.48;
-  const stepR = -stepL;
-  const bobY = Math.abs(Math.sin(cycle)) * 3;
+  // Biomechanical 2-Bone IK walk/shamble cycle with proximal-to-distal arm lag
+  const cadence = role === 'zombie' ? 1.85 : 2.35;
+  const cycle = timeSec * cadence;
+  const strideSpan = role === 'zombie' ? 16 : 18;
+  const liftHeight = role === 'zombie' ? 7 : 10;
+  const bobY = Math.abs(Math.cos(cycle)) * 2.4;
 
-  ctx.translate(0, -bobY);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = 5;
-  ctx.lineCap = 'round';
-  ctx.lineJoin = 'round';
+  const lean = role === 'zombie' ? 0.26 : role === 'carry_crate' ? 0.14 : 0.08;
+  const hipX = Math.sin(lean) * 3;
+  const hipY = -56 - bobY;
+  const lumbarX = hipX + Math.sin(lean * 0.7) * 22;
+  const lumbarY = hipY - Math.cos(lean * 0.7) * 22;
+  const neckX = hipX + Math.sin(lean) * 46;
+  const neckY = hipY - Math.cos(lean) * 46;
+  const headX = neckX + Math.sin(lean) * 13;
+  const headY = neckY - 13;
 
-  const lean = role === 'zombie' ? 0.28 : 0.08;
-  const hipX = 0;
-  const hipY = -52;
-  const neckX = Math.sin(lean) * 48;
-  const neckY = hipY - Math.cos(lean) * 48;
-  const headX = neckX + Math.sin(lean) * 14;
-  const headY = neckY - 14;
+  // Solve 2-Bone IK legs planted on ground plane (y = -1)
+  const phaseL = Math.sin(cycle);
+  const liftL = Math.max(0, Math.cos(cycle)) * liftHeight;
+  const ikLegL = solveTwoBoneIK(hipX - 2, hipY, hipX + phaseL * strideSpan, -1 - liftL, 28, 28, 1);
 
-  // Legs
-  ctx.beginPath();
-  ctx.moveTo(hipX, hipY);
-  ctx.lineTo(hipX + Math.sin(stepL) * 26, 0);
-  ctx.moveTo(hipX, hipY);
-  ctx.lineTo(hipX + Math.sin(stepR) * 26, 0);
-  ctx.stroke();
+  const phaseR = Math.sin(cycle + Math.PI);
+  const liftR = Math.max(0, Math.cos(cycle + Math.PI)) * liftHeight;
+  const ikLegR = solveTwoBoneIK(hipX + 2, hipY, hipX + phaseR * strideSpan, -1 - liftR, 28, 28, 1);
 
-  // Spine
-  ctx.beginPath();
-  ctx.moveTo(hipX, hipY);
-  ctx.lineTo(neckX, neckY);
-  ctx.stroke();
+  // Back Leg
+  drawTaperedLimbSegment(ctx, hipX - 2, hipY, ikLegL.midX, ikLegL.midY, 5.8, 4.4, color, true);
+  drawTaperedLimbSegment(ctx, ikLegL.midX, ikLegL.midY, ikLegL.endX, ikLegL.endY, 4.4, 3.2, color, true);
+
+  // Anatomical S-Spine
+  drawTaperedLimbSegment(ctx, hipX, hipY, lumbarX, lumbarY, 6.2, 5.8, color, false);
+  drawTaperedLimbSegment(ctx, lumbarX, lumbarY, neckX, neckY, 5.8, 6.4, color, false);
+
+  // Front Leg
+  drawTaperedLimbSegment(ctx, hipX + 2, hipY, ikLegR.midX, ikLegR.midY, 6.0, 4.6, color, false);
+  drawTaperedLimbSegment(ctx, ikLegR.midX, ikLegR.midY, ikLegR.endX, ikLegR.endY, 4.6, 3.4, color, false);
 
   // Head
   ctx.fillStyle = '#0F172A';
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 4;
   ctx.beginPath();
   ctx.arc(headX, headY, 12, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
 
-  // Arms based on role
+  // Articulated 2-Segment Arms based on role (with proximal-to-distal phase lag)
+  const shoulderX = neckX;
+  const shoulderY = neckY + 6;
   if (role === 'zombie') {
-    const reachWave = Math.sin(cycle * 0.8) * 5;
-    ctx.beginPath();
-    ctx.moveTo(neckX, neckY + 6);
-    ctx.lineTo(neckX + 34, neckY + 4 + reachWave);
-    ctx.moveTo(neckX, neckY + 10);
-    ctx.lineTo(neckX + 30, neckY + 14 - reachWave);
-    ctx.stroke();
+    const reachWave = Math.sin(cycle - 0.25) * 4.5;
+    const ikArmL = solveTwoBoneIK(shoulderX, shoulderY, shoulderX + 30, shoulderY + 6 - reachWave, 20, 18, -1);
+    const ikArmR = solveTwoBoneIK(shoulderX, shoulderY, shoulderX + 34, shoulderY + 2 + reachWave, 20, 18, -1);
+    drawTaperedLimbSegment(ctx, shoulderX, shoulderY, ikArmL.midX, ikArmL.midY, 4.6, 3.6, color, true);
+    drawTaperedLimbSegment(ctx, ikArmL.midX, ikArmL.midY, ikArmL.endX, ikArmL.endY, 3.6, 2.8, color, true);
+    drawTaperedLimbSegment(ctx, shoulderX, shoulderY, ikArmR.midX, ikArmR.midY, 4.8, 3.8, color, false);
+    drawTaperedLimbSegment(ctx, ikArmR.midX, ikArmR.midY, ikArmR.endX, ikArmR.endY, 3.8, 3.0, color, false);
   } else if (role === 'carry_crate') {
-    ctx.beginPath();
-    ctx.moveTo(neckX, neckY + 6);
-    ctx.lineTo(neckX + 22, neckY + 22);
-    ctx.stroke();
+    const crateBob = Math.sin(cycle * 2 - 0.2) * 1.8;
+    const ikArm = solveTwoBoneIK(shoulderX, shoulderY, shoulderX + 20, shoulderY + 18 + crateBob, 20, 18, -1);
+    drawTaperedLimbSegment(ctx, shoulderX, shoulderY, ikArm.midX, ikArm.midY, 4.8, 3.8, color, false);
+    drawTaperedLimbSegment(ctx, ikArm.midX, ikArm.midY, ikArm.endX, ikArm.endY, 3.8, 3.0, color, false);
     ctx.fillStyle = '#F59E0B';
-    ctx.fillRect(neckX + 12, neckY + 8, 24, 20);
+    ctx.fillRect(shoulderX + 12, shoulderY + 6 + crateBob, 24, 20);
     ctx.strokeStyle = '#FEF08A';
     ctx.lineWidth = 2;
-    ctx.strokeRect(neckX + 12, neckY + 8, 24, 20);
+    ctx.strokeRect(shoulderX + 12, shoulderY + 6 + crateBob, 24, 20);
   } else {
-    ctx.beginPath();
-    ctx.moveTo(neckX, neckY + 6);
-    ctx.lineTo(neckX + Math.sin(stepR) * 20, neckY + 32);
-    ctx.moveTo(neckX, neckY + 6);
-    ctx.lineTo(neckX + Math.sin(stepL) * 20, neckY + 32);
-    ctx.stroke();
+    const armPhaseR = Math.sin(cycle + Math.PI - 0.18) * 15;
+    const armPhaseL = Math.sin(cycle - 0.18) * 15;
+    const ikArmL = solveTwoBoneIK(shoulderX, shoulderY, shoulderX + armPhaseL, shoulderY + 28, 20, 18, -1);
+    const ikArmR = solveTwoBoneIK(shoulderX, shoulderY, shoulderX + armPhaseR, shoulderY + 28, 20, 18, -1);
+    drawTaperedLimbSegment(ctx, shoulderX, shoulderY, ikArmL.midX, ikArmL.midY, 4.6, 3.6, color, true);
+    drawTaperedLimbSegment(ctx, ikArmL.midX, ikArmL.midY, ikArmL.endX, ikArmL.endY, 3.6, 2.8, color, true);
+    drawTaperedLimbSegment(ctx, shoulderX, shoulderY, ikArmR.midX, ikArmR.midY, 4.8, 3.8, color, false);
+    drawTaperedLimbSegment(ctx, ikArmR.midX, ikArmR.midY, ikArmR.endX, ikArmR.endY, 3.8, 3.0, color, false);
   }
 
   ctx.restore();
@@ -1443,7 +1820,8 @@ function drawVehicleWithDriver(
   elapsedSec: number = 0,
   beatProgress: number = 0.5,
   beatIndex: number = 0,
-  motionContext?: MotionVariationContext
+  motionContext?: MotionVariationContext,
+  prosodicEnvelope?: ProsodicSpeechEnvelope
 ) {
   ctx.save();
   ctx.translate(x, groundY);
@@ -1560,7 +1938,10 @@ function drawVehicleWithDriver(
     undefined,
     1,
     0,
-    motionContext
+    motionContext,
+    undefined,
+    prosodicEnvelope,
+    1
   );
 
   // Steering wheel in hands
@@ -1740,6 +2121,55 @@ function drawSpeedLines(
   ctx.restore();
 }
 
+function drawTaperedLimbSegment(
+  ctx: CanvasRenderingContext2D,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  widthStart: number,
+  widthEnd: number,
+  color: string,
+  isBackLimb: boolean = false
+) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const len = Math.hypot(dx, dy);
+  if (len < 0.5) return;
+
+  const nx = -dy / len;
+  const ny = dx / len;
+  const r1 = widthStart * 0.5;
+  const r2 = widthEnd * 0.5;
+
+  ctx.save();
+  if (isBackLimb) {
+    ctx.globalAlpha = 0.82;
+  }
+
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x1 + nx * r1, y1 + ny * r1);
+  ctx.lineTo(x2 + nx * r2, y2 + ny * r2);
+  ctx.arc(x2, y2, r2, Math.atan2(ny, nx), Math.atan2(-ny, -nx), false);
+  ctx.lineTo(x1 - nx * r1, y1 - ny * r1);
+  ctx.arc(x1, y1, r1, Math.atan2(-ny, -nx), Math.atan2(ny, nx), false);
+  ctx.closePath();
+  ctx.fill();
+
+  // Subtle volumetric rim-light highlight along the upper/front edge of front limbs
+  if (!isBackLimb) {
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.28)';
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(x1 + nx * (r1 * 0.65), y1 + ny * (r1 * 0.65));
+    ctx.lineTo(x2 + nx * (r2 * 0.65), y2 + ny * (r2 * 0.65));
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
 function drawCharacter(
   ctx: CanvasRenderingContext2D,
   char: SceneCharacter,
@@ -1756,32 +2186,13 @@ function drawCharacter(
   prevAction?: StickmanAction,
   transitionBlend: number = 1,
   velocityX: number = 0,
-  motionContext?: MotionVariationContext
+  motionContext?: MotionVariationContext,
+  sceneAnchors?: SceneAnchorMap,
+  prosodicEnvelope?: ProsodicSpeechEnvelope,
+  facingCos: number = 1
 ) {
   ctx.save();
   ctx.translate(x, groundY);
-  if (flipX) {
-    ctx.scale(-1, 1);
-  }
-
-  // Dynamic acrobatic rotations and physical maneuvers
-  if (maneuver === 'backflip' || maneuver === 'backflip_celebrate') {
-    ctx.translate(0, -60);
-    ctx.rotate(beatProgress * Math.PI * 2);
-    ctx.translate(0, 60);
-  } else if (maneuver === 'spin_360' || maneuver === 'combat_combo_rush') {
-    ctx.translate(0, -60);
-    ctx.rotate(-beatProgress * Math.PI * 2);
-    ctx.translate(0, 60);
-  } else if (maneuver === 'slide_kick' || maneuver === 'dodge_slide') {
-    const slideTilt = Math.sin(beatProgress * Math.PI) * 0.34;
-    ctx.rotate(slideTilt);
-  } else if (maneuver === 'stumble' || maneuver === 'jump_shock') {
-    ctx.rotate(Math.sin(beatProgress * Math.PI * 3) * 0.16);
-  }
-
-  const scale = char.scale || (viewHeight > 700 ? 1.15 : 1.0);
-  ctx.scale(scale, scale);
 
   // Calculate current target limb angles with independent multi-harmonic oscillators and deterministic motionContext
   const targetAngles = calculateLimbAngles(
@@ -1811,107 +2222,371 @@ function drawCharacter(
     angles = blendLimbAngles(fromAngles, targetAngles, transitionBlend);
   }
 
-  const color = char.color || '#0F172A';
+  // Optional 2-Bone IK hand target toward nearby environmental anchor (workstation, barricade, radar, vault)
+  let handTargetLocal: { x: number; y: number; blend: number; hand?: 'left' | 'right' } | undefined;
+  if (sceneAnchors?.interactionAnchor) {
+    const worldDx = sceneAnchors.interactionAnchor.x - x;
+    const worldDy = sceneAnchors.interactionAnchor.y - groundY;
+    const distToAnchor = Math.hypot(worldDx, worldDy);
+    const isInteractiveAction =
+      char.action === 'zombie_survive_barricade' ||
+      char.action === 'work_computer' ||
+      char.action === 'scavenge_supplies' ||
+      char.action === 'command_crowd';
 
-  ctx.lineWidth = 5.5;
+    if (isInteractiveAction && distToAnchor < 145) {
+      const localX = (flipX ? -worldDx : worldDx) * 0.45;
+      const localY = Math.max(-72, Math.min(-24, worldDy));
+      const proximityBlend = Math.max(0, Math.min(0.65, (1 - distToAnchor / 145) * 0.65));
+      handTargetLocal = {
+        x: localX,
+        y: localY,
+        blend: proximityBlend,
+        hand: 'right',
+      };
+    }
+  }
+
+  const pose = resolveBiomechanicalHumanPose(
+    angles,
+    char.action,
+    progress,
+    elapsedSec,
+    beatProgress,
+    velocityX,
+    motionContext,
+    handTargetLocal,
+    prosodicEnvelope,
+    facingCos
+  );
+
+  // 1. Dynamic Ground Ambient Occlusion & Planted Foot Shadows (drawn before flip/acrobatic rotation)
+  const isSeatedVehicle =
+    char.action === 'drive_car' ||
+    char.action === 'car_chase' ||
+    char.action === 'car_drift' ||
+    char.action === 'car_police';
+  if (!isSeatedVehicle) {
+    const elevation = Math.max(0, -angles.verticalOffset);
+    const shadowScale = Math.max(0.45, 1 - elevation / 65);
+    const shadowAlpha = Math.max(0.14, 0.36 * shadowScale);
+
+    ctx.save();
+    ctx.fillStyle = `rgba(2, 6, 23, ${shadowAlpha})`;
+    ctx.beginPath();
+    ctx.ellipse(0, 3, 26 * shadowScale, 6.5 * shadowScale, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    const signX = flipX ? -1 : 1;
+    if (pose.leftLeg.planted) {
+      ctx.fillStyle = 'rgba(2, 6, 23, 0.42)';
+      ctx.beginPath();
+      ctx.ellipse(pose.leftLeg.ankleX * signX, 2, 8, 2.8, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    if (pose.rightLeg.planted) {
+      ctx.fillStyle = 'rgba(2, 6, 23, 0.42)';
+      ctx.beginPath();
+      ctx.ellipse(pose.rightLeg.ankleX * signX, 2, 8, 2.8, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  if (flipX) {
+    ctx.scale(-1, 1);
+  }
+
+  // Dynamic acrobatic rotations and physical maneuvers
+  if (maneuver === 'backflip' || maneuver === 'backflip_celebrate') {
+    ctx.translate(0, -60);
+    ctx.rotate(beatProgress * Math.PI * 2);
+    ctx.translate(0, 60);
+  } else if (maneuver === 'spin_360' || maneuver === 'combat_combo_rush') {
+    ctx.translate(0, -60);
+    ctx.rotate(-beatProgress * Math.PI * 2);
+    ctx.translate(0, 60);
+  } else if (maneuver === 'slide_kick' || maneuver === 'dodge_slide') {
+    const slideTilt = Math.sin(beatProgress * Math.PI) * 0.34;
+    ctx.rotate(slideTilt);
+  } else if (maneuver === 'stumble' || maneuver === 'jump_shock') {
+    ctx.rotate(Math.sin(beatProgress * Math.PI * 3) * 0.16);
+  }
+
+  const scale = char.scale || (viewHeight > 700 ? 1.15 : 1.0);
+  ctx.scale(scale, scale);
+
+  const color = char.color || '#0F172A';
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.strokeStyle = color;
   ctx.fillStyle = color;
 
-  const hipY = -75 + angles.verticalOffset;
-  const spineLength = 55;
-  const neckX = Math.sin(angles.bodyLean) * spineLength;
-  const neckY = hipY - Math.cos(angles.bodyLean) * spineLength - (angles.shoulderShrug || 0);
+  // 2. Back Leg (Left Leg) — Tapered Thigh -> Calf -> Foot with depth shading
+  drawTaperedLimbSegment(
+    ctx,
+    pose.leftHipX,
+    pose.leftHipY,
+    pose.leftLeg.kneeX,
+    pose.leftLeg.kneeY,
+    7.2,
+    5.4,
+    color,
+    true
+  );
+  drawTaperedLimbSegment(
+    ctx,
+    pose.leftLeg.kneeX,
+    pose.leftLeg.kneeY,
+    pose.leftLeg.ankleX,
+    pose.leftLeg.ankleY,
+    5.4,
+    3.8,
+    color,
+    true
+  );
+  drawTaperedLimbSegment(
+    ctx,
+    pose.leftLeg.ankleX,
+    pose.leftLeg.ankleY,
+    pose.leftLeg.toeX,
+    pose.leftLeg.toeY,
+    4.2,
+    3.0,
+    color,
+    true
+  );
 
-  // Mid-spine control point for flexible curved rubber-hose torso
-  const spineCurveOffset = (angles.spineCurve || 0) * 28;
-  const midSpineX = neckX * 0.5 + spineCurveOffset;
-  const midSpineY = (hipY + neckY) * 0.5;
+  // 3. Back Arm (Left Arm) — Tapered Upper Arm -> Forearm -> Hand
+  drawTaperedLimbSegment(
+    ctx,
+    pose.leftShoulderX,
+    pose.leftShoulderY,
+    pose.leftArm.elbowX,
+    pose.leftArm.elbowY,
+    6.0,
+    4.6,
+    color,
+    true
+  );
+  drawTaperedLimbSegment(
+    ctx,
+    pose.leftArm.elbowX,
+    pose.leftArm.elbowY,
+    pose.leftArm.wristX,
+    pose.leftArm.wristY,
+    4.6,
+    3.5,
+    color,
+    true
+  );
+  drawTaperedLimbSegment(
+    ctx,
+    pose.leftArm.wristX,
+    pose.leftArm.wristY,
+    pose.leftArm.handX,
+    pose.leftArm.handY,
+    3.8,
+    2.8,
+    color,
+    true
+  );
+  // Left Hand articulated thumb & finger silhouette
+  drawTaperedLimbSegment(
+    ctx,
+    pose.leftArm.wristX,
+    pose.leftArm.wristY,
+    pose.leftArm.thumbX,
+    pose.leftArm.thumbY,
+    2.4,
+    1.6,
+    color,
+    true
+  );
+  drawTaperedLimbSegment(
+    ctx,
+    pose.leftArm.handX,
+    pose.leftArm.handY,
+    pose.leftArm.fingerX,
+    pose.leftArm.fingerY,
+    2.4,
+    1.5,
+    color,
+    true
+  );
 
-  // Articulated 3-segment Legs (Thigh -> Shin -> Ankle/Foot)
-  const legLenUpper = 38;
-  const legLenLower = 38;
-  const footLen = 11;
+  // 4. Anatomical Pelvis, 3-Segment S-Curve Torso & Clavicle Shoulder Girdle
+  drawTaperedLimbSegment(
+    ctx,
+    pose.leftHipX,
+    pose.leftHipY,
+    pose.rightHipX,
+    pose.rightHipY,
+    5.5,
+    5.5,
+    color,
+    false
+  );
+  drawTaperedLimbSegment(
+    ctx,
+    pose.pelvisX,
+    pose.pelvisY,
+    pose.lumbarX,
+    pose.lumbarY,
+    6.8,
+    6.4,
+    color,
+    false
+  );
+  drawTaperedLimbSegment(
+    ctx,
+    pose.lumbarX,
+    pose.lumbarY,
+    pose.thoraxX,
+    pose.thoraxY,
+    6.4,
+    7.4 + pose.chestBreath * 0.25,
+    color,
+    false
+  );
+  drawTaperedLimbSegment(
+    ctx,
+    pose.thoraxX,
+    pose.thoraxY,
+    pose.neckX,
+    pose.neckY,
+    7.2,
+    5.2,
+    color,
+    false
+  );
+  drawTaperedLimbSegment(
+    ctx,
+    pose.leftShoulderX,
+    pose.leftShoulderY,
+    pose.rightShoulderX,
+    pose.rightShoulderY,
+    5.6,
+    5.6,
+    color,
+    false
+  );
 
-  const kneeLX = Math.sin(angles.leftLegUpper) * legLenUpper;
-  const kneeLY = hipY + Math.cos(angles.leftLegUpper) * legLenUpper;
-  const footLX = kneeLX + Math.sin(angles.leftLegUpper + angles.leftLegLower) * legLenLower;
-  const footLY = kneeLY + Math.cos(angles.leftLegUpper + angles.leftLegLower) * legLenLower;
-  const ankleAngleL =
-    angles.leftLegUpper + angles.leftLegLower + 1.35 + (angles.leftAnkleFlex || 0);
-  const toeLX = footLX + Math.sin(ankleAngleL) * footLen;
-  const toeLY = footLY + Math.cos(ankleAngleL) * footLen;
+  // 5. Front Leg (Right Leg) — Tapered Thigh -> Calf -> Foot with rim highlight
+  drawTaperedLimbSegment(
+    ctx,
+    pose.rightHipX,
+    pose.rightHipY,
+    pose.rightLeg.kneeX,
+    pose.rightLeg.kneeY,
+    7.4,
+    5.5,
+    color,
+    false
+  );
+  drawTaperedLimbSegment(
+    ctx,
+    pose.rightLeg.kneeX,
+    pose.rightLeg.kneeY,
+    pose.rightLeg.ankleX,
+    pose.rightLeg.ankleY,
+    5.5,
+    3.9,
+    color,
+    false
+  );
+  drawTaperedLimbSegment(
+    ctx,
+    pose.rightLeg.ankleX,
+    pose.rightLeg.ankleY,
+    pose.rightLeg.toeX,
+    pose.rightLeg.toeY,
+    4.4,
+    3.2,
+    color,
+    false
+  );
 
-  ctx.beginPath();
-  ctx.moveTo(0, hipY);
-  ctx.lineTo(kneeLX, kneeLY);
-  ctx.lineTo(footLX, footLY);
-  ctx.lineTo(toeLX, toeLY);
-  ctx.stroke();
+  // 6. Front Arm (Right Arm) — Tapered Upper Arm -> Forearm -> Hand & Articulated Fingers
+  drawTaperedLimbSegment(
+    ctx,
+    pose.rightShoulderX,
+    pose.rightShoulderY,
+    pose.rightArm.elbowX,
+    pose.rightArm.elbowY,
+    6.2,
+    4.8,
+    color,
+    false
+  );
+  drawTaperedLimbSegment(
+    ctx,
+    pose.rightArm.elbowX,
+    pose.rightArm.elbowY,
+    pose.rightArm.wristX,
+    pose.rightArm.wristY,
+    4.8,
+    3.6,
+    color,
+    false
+  );
+  drawTaperedLimbSegment(
+    ctx,
+    pose.rightArm.wristX,
+    pose.rightArm.wristY,
+    pose.rightArm.handX,
+    pose.rightArm.handY,
+    4.0,
+    3.0,
+    color,
+    false
+  );
+  drawTaperedLimbSegment(
+    ctx,
+    pose.rightArm.wristX,
+    pose.rightArm.wristY,
+    pose.rightArm.thumbX,
+    pose.rightArm.thumbY,
+    2.6,
+    1.7,
+    color,
+    false
+  );
+  drawTaperedLimbSegment(
+    ctx,
+    pose.rightArm.handX,
+    pose.rightArm.handY,
+    pose.rightArm.fingerX,
+    pose.rightArm.fingerY,
+    2.6,
+    1.6,
+    color,
+    false
+  );
 
-  const kneeRX = Math.sin(angles.rightLegUpper) * legLenUpper;
-  const kneeRY = hipY + Math.cos(angles.rightLegUpper) * legLenUpper;
-  const footRX = kneeRX + Math.sin(angles.rightLegUpper + angles.rightLegLower) * legLenLower;
-  const footRY = kneeRY + Math.cos(angles.rightLegUpper + angles.rightLegLower) * legLenLower;
-  const ankleAngleR =
-    angles.rightLegUpper + angles.rightLegLower + 1.35 + (angles.rightAnkleFlex || 0);
-  const toeRX = footRX + Math.sin(ankleAngleR) * footLen;
-  const toeRY = footRY + Math.cos(ankleAngleR) * footLen;
+  // Subtle anatomical joint articulation highlights (knee, elbow, wrist, shoulder)
+  ctx.save();
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
+  for (const [jx, jy, jr] of [
+    [pose.rightShoulderX, pose.rightShoulderY, 2.2],
+    [pose.rightArm.elbowX, pose.rightArm.elbowY, 1.8],
+    [pose.rightArm.wristX, pose.rightArm.wristY, 1.5],
+    [pose.rightLeg.kneeX, pose.rightLeg.kneeY, 2.0],
+    [pose.rightLeg.ankleX, pose.rightLeg.ankleY, 1.6],
+  ]) {
+    ctx.beginPath();
+    ctx.arc(jx, jy, jr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
 
-  ctx.beginPath();
-  ctx.moveTo(0, hipY);
-  ctx.lineTo(kneeRX, kneeRY);
-  ctx.lineTo(footRX, footRY);
-  ctx.lineTo(toeRX, toeRY);
-  ctx.stroke();
+  const handLX = pose.leftArm.handX;
+  const handLY = pose.leftArm.handY;
+  const handRX = pose.rightArm.handX;
+  const handRY = pose.rightArm.handY;
+  const wristAngleR = pose.rightArm.wristAngle;
 
-  // Flexible Curved Torso Spine
-  ctx.beginPath();
-  ctx.moveTo(0, hipY);
-  ctx.quadraticCurveTo(midSpineX, midSpineY, neckX, neckY);
-  ctx.stroke();
-
-  // Articulated 3-segment Arms (Upper Arm -> Forearm -> Loose Wrist/Hand)
-  const shoulderX = neckX;
-  const shoulderY = neckY + 9;
-  const armLenUpper = 32;
-  const armLenLower = 28;
-  const handLen = 9;
-
-  const elbowLX = shoulderX + Math.sin(angles.leftArmUpper) * armLenUpper;
-  const elbowLY = shoulderY + Math.cos(angles.leftArmUpper) * armLenUpper;
-  const wristLX = elbowLX + Math.sin(angles.leftArmUpper + angles.leftArmLower) * armLenLower;
-  const wristLY = elbowLY + Math.cos(angles.leftArmUpper + angles.leftArmLower) * armLenLower;
-  const wristAngleL =
-    angles.leftArmUpper + angles.leftArmLower + (angles.leftWristFlex || 0);
-  const handLX = wristLX + Math.sin(wristAngleL) * handLen;
-  const handLY = wristLY + Math.cos(wristAngleL) * handLen;
-
-  ctx.beginPath();
-  ctx.moveTo(shoulderX, shoulderY);
-  ctx.lineTo(elbowLX, elbowLY);
-  ctx.lineTo(wristLX, wristLY);
-  ctx.lineTo(handLX, handLY);
-  ctx.stroke();
-
-  const elbowRX = shoulderX + Math.sin(angles.rightArmUpper) * armLenUpper;
-  const elbowRY = shoulderY + Math.cos(angles.rightArmUpper) * armLenUpper;
-  const wristRX = elbowRX + Math.sin(angles.rightArmUpper + angles.rightArmLower) * armLenLower;
-  const wristRY = elbowRY + Math.cos(angles.rightArmUpper + angles.rightArmLower) * armLenLower;
-  const wristAngleR =
-    angles.rightArmUpper + angles.rightArmLower + (angles.rightWristFlex || 0);
-  const handRX = wristRX + Math.sin(wristAngleR) * handLen;
-  const handRY = wristRY + Math.cos(wristAngleR) * handLen;
-
-  ctx.beginPath();
-  ctx.moveTo(shoulderX, shoulderY);
-  ctx.lineTo(elbowRX, elbowRY);
-  ctx.lineTo(wristRX, wristRY);
-  ctx.lineTo(handRX, handRY);
-  ctx.stroke();
-
-  // Props
+  // 7. Props in Hands
   if (char.prop === 'sword' || char.action === 'sword_duel') {
     ctx.save();
     ctx.lineWidth = 6;
@@ -1944,15 +2619,35 @@ function drawCharacter(
     ctx.strokeStyle = '#94A3B8';
     ctx.lineWidth = 1.5;
     ctx.strokeRect(handRX - 8, handRY + 4, 18, 14);
+  } else if (char.prop === 'shield' || char.action === 'zombie_survive_barricade') {
+    ctx.save();
+    ctx.fillStyle = '#1E293B';
+    ctx.strokeStyle = '#38BDF8';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.roundRect(handLX - 8, handLY - 18, 14, 34, 4);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
   }
 
-  // Head with independent headTilt & headBob
+  // 8. Head with cervical neck link & dynamic secondary scarf physics
   const headRadius = 18;
-  const headCenterX =
-    neckX + Math.sin(angles.bodyLean + (angles.headTilt || 0)) * 16;
-  const headCenterY = neckY - headRadius + angles.headBob;
+  const headCenterX = pose.headCenterX;
+  const headCenterY = pose.headCenterY;
 
-  // Dynamic Flowing Scarf / Action Ribbon trailing behind neck/head (gives loose secondary physics!)
+  drawTaperedLimbSegment(
+    ctx,
+    pose.neckX,
+    pose.neckY,
+    headCenterX,
+    headCenterY + headRadius * 0.65,
+    4.6,
+    4.2,
+    color,
+    false
+  );
+
   const phaseSec = elapsedSec !== undefined ? elapsedSec : progress * 5;
   const windDrag = Math.min(28, Math.max(-28, -velocityX * 65));
   const wave1 = Math.sin(phaseSec * 9.5) * 9;
@@ -1963,24 +2658,50 @@ function drawCharacter(
   ctx.lineWidth = 3.5;
   ctx.globalAlpha = 0.78;
   ctx.beginPath();
-  ctx.moveTo(neckX - 4, neckY + 3);
+  ctx.moveTo(pose.neckX - 4, pose.neckY + 3);
   ctx.quadraticCurveTo(
-    neckX - 20 + windDrag * 0.5,
-    neckY + 5 + wave1,
-    neckX - 38 + windDrag,
-    neckY + 9 + wave2
+    pose.neckX - 20 + windDrag * 0.5,
+    pose.neckY + 5 + wave1,
+    pose.neckX - 38 + windDrag,
+    pose.neckY + 9 + wave2
   );
   ctx.stroke();
   ctx.restore();
 
+  // Stylized Head Sphere with subtle 3D inner shading
+  ctx.save();
+  ctx.lineWidth = 4.8;
+  ctx.strokeStyle = color;
+  const headGrad = ctx.createRadialGradient(
+    headCenterX + 4,
+    headCenterY - 5,
+    3,
+    headCenterX,
+    headCenterY,
+    headRadius
+  );
+  headGrad.addColorStop(0, '#FFFFFF');
+  headGrad.addColorStop(0.82, '#F8FAFC');
+  headGrad.addColorStop(1, '#E2E8F0');
+  ctx.fillStyle = headGrad;
   ctx.beginPath();
   ctx.arc(headCenterX, headCenterY, headRadius, 0, Math.PI * 2);
-  ctx.fillStyle = '#FFFFFF';
   ctx.fill();
   ctx.stroke();
+  ctx.restore();
 
-  // Face
-  drawFace(ctx, headCenterX, headCenterY, char.expression, isSpeaking, progress);
+  // 9. Expressive Human Face with Gaze Tracking, Brow Musculature & Prosodic Lip-Sync
+  drawFace(
+    ctx,
+    headCenterX,
+    headCenterY,
+    char.expression,
+    isSpeaking,
+    progress,
+    velocityX,
+    pose.headTilt,
+    prosodicEnvelope
+  );
 
   ctx.restore();
 }
@@ -1991,105 +2712,157 @@ function drawFace(
   headY: number,
   expression: SceneCharacter['expression'],
   isSpeaking: boolean,
-  progress: number
+  progress: number,
+  velocityX: number = 0,
+  headTilt: number = 0,
+  prosodicEnvelope?: ProsodicSpeechEnvelope
 ) {
   ctx.save();
   ctx.fillStyle = '#0F172A';
   ctx.strokeStyle = '#0F172A';
-  ctx.lineWidth = 2.5;
+  ctx.lineWidth = 2.2;
+  ctx.lineCap = 'round';
 
-  const eyeOffsetX = 5;
-  const eyeY = headY - 2;
+  // Subtle pupil gaze shift following motion & head tilt
+  const gazeX = Math.max(-2.2, Math.min(2.2, velocityX * 14 + headTilt * 4));
+  const gazeY = Math.max(-1.5, Math.min(1.5, headTilt * 3));
 
-  switch (expression) {
-    case 'shocked': {
-      ctx.beginPath();
-      ctx.arc(headX + eyeOffsetX - 4, eyeY, 3.5, 0, Math.PI * 2);
-      ctx.arc(headX + eyeOffsetX + 5, eyeY, 3.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(headX + eyeOffsetX, headY + 8, 5, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.fillStyle = '#38BDF8';
-      ctx.font = '14px sans-serif';
-      ctx.fillText('💦', headX + 16, headY - 10);
-      break;
-    }
+  const eyeOffsetX = 5 + gazeX * 0.45;
+  const eyeY = headY - 2 + gazeY * 0.35;
+  const leftEyeX = headX + eyeOffsetX - 3.5;
+  const rightEyeX = headX + eyeOffsetX + 4.8;
 
-    case 'angry': {
-      ctx.beginPath();
-      ctx.moveTo(headX + eyeOffsetX - 8, eyeY - 5);
-      ctx.lineTo(headX + eyeOffsetX - 1, eyeY - 2);
-      ctx.moveTo(headX + eyeOffsetX + 8, eyeY - 5);
-      ctx.lineTo(headX + eyeOffsetX + 1, eyeY - 2);
-      ctx.stroke();
+  // Natural periodic blink (~every 3.5s)
+  const isBlinking = Math.sin(progress * 26 + 0.7) > 0.955;
 
-      ctx.beginPath();
-      ctx.arc(headX + eyeOffsetX - 4, eyeY + 1, 2, 0, Math.PI * 2);
-      ctx.arc(headX + eyeOffsetX + 4, eyeY + 1, 2, 0, Math.PI * 2);
-      ctx.fill();
+  const activeProsody =
+    isSpeaking && prosodicEnvelope && !prosodicEnvelope.isBreathPause
+      ? prosodicEnvelope.syllablePulse * (0.65 + prosodicEnvelope.emphasisBoost * 0.55)
+      : 0;
 
-      ctx.beginPath();
-      ctx.moveTo(headX + eyeOffsetX - 6, headY + 7);
-      ctx.lineTo(headX + eyeOffsetX + 6, headY + 7);
-      ctx.stroke();
-      break;
-    }
+  // 1. Expressive Eyebrow Musculature
+  ctx.save();
+  ctx.lineWidth = 2.1;
+  if (expression === 'angry' || expression === 'intense' || expression === 'determined') {
+    const furrow = expression === 'angry' ? 3.2 : 2.1;
+    ctx.beginPath();
+    ctx.moveTo(leftEyeX - 3.5, eyeY - 5.5);
+    ctx.lineTo(leftEyeX + 2.2, eyeY - 5.5 + furrow);
+    ctx.moveTo(rightEyeX + 3.5, eyeY - 5.5);
+    ctx.lineTo(rightEyeX - 2.2, eyeY - 5.5 + furrow);
+    ctx.stroke();
+  } else if (expression === 'shocked') {
+    ctx.beginPath();
+    ctx.arc(leftEyeX, eyeY - 4.8, 3.6, Math.PI * 1.15, Math.PI * 1.85);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(rightEyeX, eyeY - 4.8, 3.6, Math.PI * 1.15, Math.PI * 1.85);
+    ctx.stroke();
+  } else if (expression === 'sad') {
+    ctx.beginPath();
+    ctx.moveTo(leftEyeX - 3.5, eyeY - 3.2);
+    ctx.lineTo(leftEyeX + 2.2, eyeY - 5.8);
+    ctx.moveTo(rightEyeX + 3.5, eyeY - 3.2);
+    ctx.lineTo(rightEyeX - 2.2, eyeY - 5.8);
+    ctx.stroke();
+  } else {
+    // Calm / Confident / Talking subtle brow arch synchronized with syllable prosody
+    const speakLift = isSpeaking
+      ? prosodicEnvelope
+        ? activeProsody * 1.35
+        : Math.sin(progress * 18) * 0.8
+      : 0;
+    ctx.beginPath();
+    ctx.moveTo(leftEyeX - 3, eyeY - 4.8 - speakLift);
+    ctx.lineTo(leftEyeX + 2, eyeY - 5.2 - speakLift);
+    ctx.moveTo(rightEyeX - 2, eyeY - 5.2 - speakLift);
+    ctx.lineTo(rightEyeX + 3, eyeY - 4.8 - speakLift);
+    ctx.stroke();
+  }
+  ctx.restore();
 
-    case 'smile':
-    case 'confident': {
-      ctx.beginPath();
-      ctx.arc(headX + eyeOffsetX - 3, eyeY, 2, 0, Math.PI * 2);
-      ctx.arc(headX + eyeOffsetX + 5, eyeY, 2, 0, Math.PI * 2);
-      ctx.fill();
+  // 2. Eyes & Pupils
+  if (expression === 'laughing') {
+    ctx.beginPath();
+    ctx.arc(leftEyeX, eyeY, 2.8, Math.PI, 0);
+    ctx.arc(rightEyeX, eyeY, 2.8, Math.PI, 0);
+    ctx.stroke();
+  } else if (isBlinking && expression !== 'shocked') {
+    ctx.beginPath();
+    ctx.moveTo(leftEyeX - 2.8, eyeY);
+    ctx.lineTo(leftEyeX + 2.4, eyeY);
+    ctx.moveTo(rightEyeX - 2.4, eyeY);
+    ctx.lineTo(rightEyeX + 2.8, eyeY);
+    ctx.stroke();
+  } else {
+    const eyeRadius = expression === 'shocked' ? 3.2 : 2.3;
+    ctx.beginPath();
+    ctx.arc(leftEyeX, eyeY, eyeRadius, 0, Math.PI * 2);
+    ctx.arc(rightEyeX, eyeY, eyeRadius, 0, Math.PI * 2);
+    ctx.fill();
 
-      ctx.beginPath();
-      ctx.arc(headX + eyeOffsetX + 1, headY + 5, 6, 0.1 * Math.PI, 0.9 * Math.PI);
-      ctx.stroke();
-      break;
-    }
+    // Specular eye catchlight for lifelike expression
+    ctx.fillStyle = '#FFFFFF';
+    ctx.beginPath();
+    ctx.arc(leftEyeX + 0.7, eyeY - 0.7, 0.85, 0, Math.PI * 2);
+    ctx.arc(rightEyeX + 0.7, eyeY - 0.7, 0.85, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#0F172A';
+  }
 
-    case 'laughing': {
-      ctx.beginPath();
-      ctx.arc(headX + eyeOffsetX - 3, eyeY, 3, Math.PI, 0);
-      ctx.arc(headX + eyeOffsetX + 5, eyeY, 3, Math.PI, 0);
-      ctx.stroke();
+  // 3. Mouth & Prosodic Phoneme Articulation
+  const mouthX = headX + eyeOffsetX + 0.8;
+  const mouthY = headY + 6.8;
 
-      ctx.beginPath();
-      ctx.arc(headX + eyeOffsetX + 1, headY + 6, 6, 0, Math.PI);
-      ctx.fill();
-      break;
-    }
-
-    case 'talking':
-    default: {
-      const isBlinking = Math.sin(progress * 25) > 0.95;
-      if (!isBlinking) {
+  if (isSpeaking && (!prosodicEnvelope || !prosodicEnvelope.isBreathPause)) {
+    // Prosodic syllable-synchronized jaw & lip aperture (pauses naturally during punctuation breath breaks)
+    const syllableOpen = prosodicEnvelope
+      ? Math.max(0.9, activeProsody * 4.4 + 0.7)
+      : Math.abs(Math.sin(progress * 24) * 0.7 + Math.cos(progress * 39) * 0.3) * 4.8 + 1.1;
+    const mouthWidth = prosodicEnvelope
+      ? 3.2 + prosodicEnvelope.syllablePulse * 1.4
+      : 3.6 + Math.sin(progress * 17) * 1.1;
+    ctx.beginPath();
+    ctx.ellipse(mouthX, mouthY, mouthWidth, syllableOpen, 0, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    switch (expression) {
+      case 'shocked':
         ctx.beginPath();
-        ctx.arc(headX + eyeOffsetX - 3, eyeY, 2.2, 0, Math.PI * 2);
-        ctx.arc(headX + eyeOffsetX + 5, eyeY, 2.2, 0, Math.PI * 2);
-        ctx.fill();
-      } else {
-        ctx.beginPath();
-        ctx.moveTo(headX + eyeOffsetX - 6, eyeY);
-        ctx.lineTo(headX + eyeOffsetX - 1, eyeY);
-        ctx.moveTo(headX + eyeOffsetX + 3, eyeY);
-        ctx.lineTo(headX + eyeOffsetX + 8, eyeY);
+        ctx.ellipse(mouthX, mouthY + 1, 3.8, 4.6, 0, 0, Math.PI * 2);
         ctx.stroke();
-      }
-
-      if (isSpeaking) {
-        const mouthOpen = Math.abs(Math.sin(progress * 24)) * 5 + 1;
+        break;
+      case 'angry':
+      case 'intense':
+      case 'determined':
         ctx.beginPath();
-        ctx.ellipse(headX + eyeOffsetX + 1, headY + 7, 4, mouthOpen, 0, 0, Math.PI * 2);
-        ctx.fill();
-      } else {
-        ctx.beginPath();
-        ctx.moveTo(headX + eyeOffsetX - 3, headY + 7);
-        ctx.lineTo(headX + eyeOffsetX + 5, headY + 7);
+        ctx.moveTo(mouthX - 4.8, mouthY + 0.8);
+        ctx.lineTo(mouthX + 4.8, mouthY - 0.4);
         ctx.stroke();
-      }
-      break;
+        break;
+      case 'sad':
+        ctx.beginPath();
+        ctx.arc(mouthX, mouthY + 3.5, 4.5, Math.PI * 1.15, Math.PI * 1.85);
+        ctx.stroke();
+        break;
+      case 'smile':
+      case 'confident':
+        ctx.beginPath();
+        ctx.arc(mouthX, mouthY - 1.5, 5.4, 0.12 * Math.PI, 0.88 * Math.PI);
+        ctx.stroke();
+        break;
+      case 'laughing':
+        ctx.beginPath();
+        ctx.arc(mouthX, mouthY - 1, 5.6, 0, Math.PI);
+        ctx.fill();
+        break;
+      case 'talking':
+      default:
+        ctx.beginPath();
+        ctx.moveTo(mouthX - 3.5, mouthY);
+        ctx.lineTo(mouthX + 4.2, mouthY);
+        ctx.stroke();
+        break;
     }
   }
 

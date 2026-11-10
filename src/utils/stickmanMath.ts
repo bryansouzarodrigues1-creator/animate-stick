@@ -249,6 +249,95 @@ export function blendLimbAngles(a: LimbAngles, b: LimbAngles, t: number): LimbAn
   };
 }
 
+export interface ProsodicSpeechEnvelope {
+  syllablePulse: number;    // [0 .. 1] rhythmic pulse of the current word's syllables
+  emphasisBoost: number;    // [0 .. 1] boost on exclamations, questions, or long words
+  isBreathPause: boolean;   // true during comma/period breath pauses
+  wordProgress: number;     // [0 .. 1] progress within the active word
+  activeWord: string;
+}
+
+/**
+ * Extracts a real-time prosodic speech envelope from the narration text and progress [0..1]
+ * so head nods, brow lifts, jaw opening, and hand beat-gestures synchronize with actual syllables
+ * and pause during punctuation breaths instead of oscillating like a mechanical sine wave.
+ */
+export function getProsodicSpeechEnvelope(
+  narration: string,
+  progress: number,
+  wpm: number = 155
+): ProsodicSpeechEnvelope {
+  const timing = calculateElevenLabsTiming(narration, wpm);
+  if (timing.wordTimings.length === 0) {
+    return {
+      syllablePulse: 0,
+      emphasisBoost: 0,
+      isBreathPause: true,
+      wordProgress: 0,
+      activeWord: '',
+    };
+  }
+
+  const clamped = Math.max(0, Math.min(1, progress));
+  const idx = getActiveWordIndexAtProgress(narration, clamped, wpm);
+  const entry = timing.wordTimings[idx] || timing.wordTimings[0];
+  const span = Math.max(0.001, entry.endProgress - entry.startProgress);
+  const localProg = Math.max(0, Math.min(1, (clamped - entry.startProgress) / span));
+
+  const totalDur = Math.max(0.05, entry.endSec - entry.startSec);
+  const spokenRatio = Math.max(0.25, (totalDur - entry.pauseAfterSec) / totalDur);
+  const isBreathPause = localProg > spokenRatio;
+
+  const syllables = countPortugueseSyllables(entry.word);
+  const spokenProg = isBreathPause ? 1 : localProg / spokenRatio;
+  const syllablePulse = isBreathPause
+    ? 0
+    : Math.pow(Math.abs(Math.sin(spokenProg * Math.PI * syllables)), 0.85);
+
+  const hasStrongPunct = /[!?]/.test(entry.word);
+  const emphasisBoost = Math.min(
+    1,
+    (hasStrongPunct ? 0.55 : 0) + (syllables >= 3 ? 0.3 : 0.1)
+  );
+
+  return {
+    syllablePulse,
+    emphasisBoost,
+    isBreathPause,
+    wordProgress: localProg,
+    activeWord: entry.word,
+  };
+}
+
+/**
+ * Flash & Hogan (1985) Minimum-Jerk human motor trajectory: 10t^3 - 15t^4 + 6t^5.
+ * Guarantees C2 continuity (zero velocity and zero acceleration jerk at movement boundaries).
+ */
+export function minimumJerkEase(t: number): number {
+  const u = Math.max(0, Math.min(1, t));
+  return u * u * u * (u * (u * 6 - 15) + 10);
+}
+
+/**
+ * Deterministic 1D band-limited Perlin gradient noise in [-1, 1] with quintic C2 fade.
+ * Eliminates robotic periodicity by introducing smooth, non-repeating human postural micro-sway.
+ */
+export function organicPerlin1D(x: number, seed: number = 1): number {
+  const xi = Math.floor(x);
+  const xf = x - xi;
+  const u = minimumJerkEase(xf);
+
+  const grad = (n: number): number => {
+    let h = ((n * 374761393) ^ ((seed || 1) * 668265263)) >>> 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
+    return (((h ^ (h >>> 16)) >>> 0) / 2147483648) - 1;
+  };
+
+  const g0 = grad(xi) * xf;
+  const g1 = grad(xi + 1) * (xf - 1);
+  return Math.max(-1, Math.min(1, (g0 + u * (g1 - g0)) * 1.85));
+}
+
 export interface MotionVariationContext {
   seed?: number;
   intensity?: number;     // [0.15 .. 1.0], default 0.7
@@ -261,8 +350,8 @@ export interface MotionVariationContext {
 /**
  * Calculates loose, organic, multi-harmonic limb angles and independent joint physics
  * for procedural stickman animation.
- * Uses irrational frequency ratios (phi = 1.618, sqrt2 = 1.414, sqrt3 = 1.732)
- * and optional deterministic `motionContext` (seed, intensity, anticipation, reaction, settle, weightShift)
+ * Uses proximal-to-distal kinematic wave propagation (pelvis -> spine -> shoulder -> elbow -> wrist),
+ * band-limited 1D Perlin noise (`organicPerlin1D`), and optional deterministic `motionContext`
  * so two scenes with the same action but different seeds/contexts produce distinct human-like modulation
  * while remaining 100% deterministic for any (timestamp, seed) pair.
  */
@@ -310,7 +399,13 @@ export function calculateLimbAngles(
   const sec = elapsedSec !== undefined ? elapsedSec : progress * 4.8;
   const t = sec * Math.PI * tempoScale;
 
-  // Non-repeating irrational harmonics for organic looseness ("solto mas controlado")
+  // Proximal-to-Distal Kinematic Wave Propagation lags (Successive Breaking of Joints)
+  const tSpine = (sec - 0.065) * Math.PI * tempoScale;
+  const tShoulder = (sec - 0.11) * Math.PI * tempoScale;
+  const tElbow = (sec - 0.175) * Math.PI * tempoScale;
+  const tWrist = (sec - 0.235) * Math.PI * tempoScale;
+
+  // Non-repeating irrational harmonics + 1D Perlin organic micro-sway
   const PHI = 1.6180339;
   const SQRT2 = 1.4142135;
   const SQRT3 = 1.7320508;
@@ -319,22 +414,36 @@ export function calculateLimbAngles(
   const beatSeed = beatIndex * 1.15 + seedPhaseOffset;
   const ampScale = motionContext !== undefined ? 0.68 + ctxIntensity * 0.48 : 1.0;
 
+  // Non-periodic Perlin postural drift so the character never freezes or repeats like a robot
+  const perlinSway = organicPerlin1D(sec * 0.85 + beatIndex * 0.37, rawSeed || 101) * 0.12 * ampScale;
+  const perlinArmL = organicPerlin1D(sec * 1.15 + 3.1, (rawSeed || 101) + 17) * 0.18 * ampScale;
+  const perlinArmR = organicPerlin1D(sec * 1.12 + 7.4, (rawSeed || 101) + 43) * 0.18 * ampScale;
+
   const oscL =
-    (Math.sin(t + beatSeed) * 0.42 + Math.sin(t * PHI * 0.65 + 1.1 + seedAsymmetry) * 0.22) *
+    (Math.sin(tShoulder + beatSeed) * 0.38 +
+      Math.sin(tShoulder * PHI * 0.65 + 1.1 + seedAsymmetry) * 0.2 +
+      perlinArmL) *
     ampScale;
   const oscR =
-    (Math.sin(t * SQRT2 * 0.65 + 2.3 + beatSeed) * 0.42 +
-      Math.cos(t * 0.55 - seedAsymmetry) * 0.22) *
+    (Math.sin(tShoulder * SQRT2 * 0.65 + 2.3 + beatSeed) * 0.38 +
+      Math.cos(tShoulder * 0.55 - seedAsymmetry) * 0.2 +
+      perlinArmR) *
     ampScale;
-  const wristWhipL = Math.sin(t * SQRT3 * 0.6 - 0.6 + seedPhaseOffset * 0.5) * 0.22 * ampScale;
-  const wristWhipR = Math.cos(t * PHI * 0.6 - 0.8 - seedPhaseOffset * 0.5) * 0.22 * ampScale;
-  const breathe = Math.sin(t * 0.45 + seedPhaseOffset * 0.25) * 0.035;
+  const wristWhipL =
+    (Math.sin(tWrist * SQRT3 * 0.6 - 0.6 + seedPhaseOffset * 0.5) * 0.2 +
+      Math.sin(tElbow - tWrist) * 0.08) *
+    ampScale;
+  const wristWhipR =
+    (Math.cos(tWrist * PHI * 0.6 - 0.8 - seedPhaseOffset * 0.5) * 0.2 +
+      Math.cos(tElbow - tWrist) * 0.08) *
+    ampScale;
+  const breathe = Math.sin(tSpine * 0.45 + seedPhaseOffset * 0.25) * 0.035 + perlinSway * 0.25;
 
-  // Controlled beat impulse curve with anticipation -> action/reaction -> settle envelope
+  // Controlled beat impulse curve with minimum-jerk anticipation -> action/reaction -> settle envelope
   const clampedBeatProg = Math.max(0, Math.min(1, beatProgress));
   const settleEnvelope =
-    clampedBeatProg > 0.75
-      ? 1 - ((clampedBeatProg - 0.75) / 0.25) * (0.35 * ctxSettle)
+    clampedBeatProg > 0.72
+      ? 1 - minimumJerkEase((clampedBeatProg - 0.72) / 0.28) * (0.38 * ctxSettle)
       : 1.0;
   const impulse =
     Math.sin(clampedBeatProg * Math.PI) * (0.45 + 0.35 * ctxReaction) * settleEnvelope;
@@ -344,8 +453,8 @@ export function calculateLimbAngles(
       : 0;
 
   const speechBob = isSpeaking
-    ? Math.sin(t * 1.8) * 0.08 + Math.cos(t * 2.7) * 0.04
-    : Math.sin(t * 0.5) * 0.025;
+    ? Math.sin(t * 1.8) * 0.065 + Math.cos(t * 2.7) * 0.035 + perlinSway * 0.22
+    : Math.sin(t * 0.5) * 0.02 + perlinSway * 0.15;
 
   let base: LimbAngles;
 
@@ -1140,3 +1249,709 @@ export function getSceneAtTimestamp(
 
   return { scene: scenes[scenes.length - 1], index: scenes.length - 1, sceneProgress: 1 };
 }
+
+export interface TwoBoneIKSolution {
+  midX: number;
+  midY: number;
+  endX: number;
+  endY: number;
+  upperAngle: number;
+  lowerAngle: number;
+  reachRatio: number;
+}
+
+/**
+ * Exact 2-Bone Analytical Inverse Kinematics solver using the Law of Cosines.
+ * Uses the stickman coordinate convention where angle 0 points straight down (+Y)
+ * and positive angles rotate toward +X:
+ *   mid = origin + (sin(upperAngle)*L1, cos(upperAngle)*L1)
+ *   end = mid + (sin(upperAngle + lowerAngle)*L2, cos(upperAngle + lowerAngle)*L2)
+ */
+export function solveTwoBoneIK(
+  originX: number,
+  originY: number,
+  targetX: number,
+  targetY: number,
+  lenUpper: number,
+  lenLower: number,
+  bendSign: 1 | -1 = 1
+): TwoBoneIKSolution {
+  const L1 = Math.max(1, lenUpper);
+  const L2 = Math.max(1, lenLower);
+  const dx = targetX - originX;
+  const dy = targetY - originY;
+  const rawDist = Math.hypot(dx, dy);
+  const maxReach = (L1 + L2) * 0.992;
+  const minReach = Math.max(1, Math.abs(L1 - L2) + 0.5);
+  const d = Math.max(minReach, Math.min(maxReach, rawDist));
+
+  // Base direction angle in our convention (sin(a) = dx/d, cos(a) = dy/d)
+  const baseAngle = Math.atan2(dx, dy);
+
+  const cosAlpha = Math.max(
+    -1,
+    Math.min(1, (L1 * L1 + d * d - L2 * L2) / (2 * L1 * d))
+  );
+  const alpha = Math.acos(cosAlpha);
+
+  const cosBeta = Math.max(
+    -1,
+    Math.min(1, (L1 * L1 + L2 * L2 - d * d) / (2 * L1 * L2))
+  );
+  const beta = Math.acos(cosBeta);
+
+  const upperAngle = baseAngle + bendSign * alpha;
+  const lowerAngle = -bendSign * (Math.PI - beta);
+
+  const midX = originX + Math.sin(upperAngle) * L1;
+  const midY = originY + Math.cos(upperAngle) * L1;
+  const totalLower = upperAngle + lowerAngle;
+  const endX = midX + Math.sin(totalLower) * L2;
+  const endY = midY + Math.cos(totalLower) * L2;
+
+  return {
+    midX,
+    midY,
+    endX,
+    endY,
+    upperAngle,
+    lowerAngle,
+    reachRatio: Math.min(1, rawDist / (L1 + L2)),
+  };
+}
+
+export interface SceneAnchorMap {
+  groundY: number;
+  horizonY: number;
+  interactionAnchor?: {
+    x: number;
+    y: number;
+    type: 'barricade' | 'workstation' | 'radar' | 'vault' | 'podium' | 'crate';
+    label: string;
+  };
+  lightSource: {
+    x: number;
+    y: number;
+    color: string;
+    ambientTint: string;
+    intensity: number;
+  };
+}
+
+/**
+ * Returns deterministic spatial anchors and lighting coordinates for each environment theme
+ * so characters and lighting shaders interact physically with the scene geometry.
+ */
+export function getSceneAnchors(
+  environment: StickmanScene['environment'],
+  width: number,
+  height: number
+): SceneAnchorMap {
+  const groundY = height * 0.72;
+  const horizonY = height * 0.48;
+
+  switch (environment) {
+    case 'zombie_apocalypse':
+      return {
+        groundY,
+        horizonY,
+        interactionAnchor: {
+          x: width * 0.57,
+          y: groundY - 46,
+          type: 'barricade',
+          label: 'Barricada de Contenção',
+        },
+        lightSource: {
+          x: width * 0.78,
+          y: height * 0.22,
+          color: '#FB923C',
+          ambientTint: 'rgba(234, 88, 12, 0.14)',
+          intensity: 0.85,
+        },
+      };
+
+    case 'bunker_survival':
+      return {
+        groundY,
+        horizonY,
+        interactionAnchor: {
+          x: width * 0.5,
+          y: groundY - 52,
+          type: 'radar',
+          label: 'Console de Radar',
+        },
+        lightSource: {
+          x: width * 0.5,
+          y: groundY - 195,
+          color: '#10B981',
+          ambientTint: 'rgba(16, 185, 129, 0.14)',
+          intensity: 0.82,
+        },
+      };
+
+    case 'hacker_den':
+    case 'secret_lab':
+      return {
+        groundY,
+        horizonY,
+        interactionAnchor: {
+          x: width * 0.5,
+          y: groundY - 38,
+          type: 'workstation',
+          label: 'Terminal Central',
+        },
+        lightSource: {
+          x: width * 0.5,
+          y: height * 0.18,
+          color: '#10B981',
+          ambientTint: 'rgba(16, 185, 129, 0.12)',
+          intensity: 0.78,
+        },
+      };
+
+    case 'bank_heist':
+      return {
+        groundY,
+        horizonY,
+        interactionAnchor: {
+          x: width * 0.5,
+          y: groundY - 62,
+          type: 'vault',
+          label: 'Porta do Cofre',
+        },
+        lightSource: {
+          x: width * 0.5,
+          y: height * 0.15,
+          color: '#EF4444',
+          ambientTint: 'rgba(239, 68, 68, 0.12)',
+          intensity: 0.8,
+        },
+      };
+
+    case 'highway_sunset':
+      return {
+        groundY,
+        horizonY,
+        lightSource: {
+          x: width * 0.7,
+          y: groundY - 40,
+          color: '#FDE047',
+          ambientTint: 'rgba(251, 146, 60, 0.18)',
+          intensity: 0.92,
+        },
+      };
+
+    case 'police_chase_night':
+      return {
+        groundY,
+        horizonY,
+        lightSource: {
+          x: width * 0.82,
+          y: height * 0.18,
+          color: '#3B82F6',
+          ambientTint: 'rgba(59, 130, 246, 0.16)',
+          intensity: 0.9,
+        },
+      };
+
+    case 'trillionaire_sandbox':
+    case 'money_vault':
+    case 'luxury_penthouse':
+      return {
+        groundY,
+        horizonY,
+        interactionAnchor: {
+          x: width * 0.5,
+          y: groundY - 48,
+          type: 'podium',
+          label: 'Mesa Executiva',
+        },
+        lightSource: {
+          x: width * 0.65,
+          y: height * 0.16,
+          color: '#FBBF24',
+          ambientTint: 'rgba(245, 158, 11, 0.14)',
+          intensity: 0.86,
+        },
+      };
+
+    default:
+      return {
+        groundY,
+        horizonY,
+        lightSource: {
+          x: width * 0.5,
+          y: height * 0.12,
+          color: '#38BDF8',
+          ambientTint: 'rgba(56, 189, 248, 0.1)',
+          intensity: 0.75,
+        },
+      };
+  }
+}
+
+export interface BiomechanicalHumanPose {
+  pelvisX: number;
+  pelvisY: number;
+  pelvisTilt: number;
+  leftHipX: number;
+  leftHipY: number;
+  rightHipX: number;
+  rightHipY: number;
+  lumbarX: number;
+  lumbarY: number;
+  thoraxX: number;
+  thoraxY: number;
+  neckX: number;
+  neckY: number;
+  leftShoulderX: number;
+  leftShoulderY: number;
+  rightShoulderX: number;
+  rightShoulderY: number;
+  headCenterX: number;
+  headCenterY: number;
+  headTilt: number;
+  chestBreath: number;
+  leftLeg: {
+    kneeX: number;
+    kneeY: number;
+    ankleX: number;
+    ankleY: number;
+    toeX: number;
+    toeY: number;
+    planted: boolean;
+  };
+  rightLeg: {
+    kneeX: number;
+    kneeY: number;
+    ankleX: number;
+    ankleY: number;
+    toeX: number;
+    toeY: number;
+    planted: boolean;
+  };
+  leftArm: {
+    elbowX: number;
+    elbowY: number;
+    wristX: number;
+    wristY: number;
+    handX: number;
+    handY: number;
+    thumbX: number;
+    thumbY: number;
+    fingerX: number;
+    fingerY: number;
+    wristAngle: number;
+  };
+  rightArm: {
+    elbowX: number;
+    elbowY: number;
+    wristX: number;
+    wristY: number;
+    handX: number;
+    handY: number;
+    thumbX: number;
+    thumbY: number;
+    fingerX: number;
+    fingerY: number;
+    wristAngle: number;
+  };
+}
+
+/**
+ * Resolves a full human-proportioned biomechanical pose from `LimbAngles`,
+ * applying 2-bone Analytical IK for foot-planting on the ground plane (`y = 0`),
+ * Inman's 6-determinant human gait cycle with heel-strike knee absorption,
+ * Center-of-Mass (COM) inertial lean, 2.5D yaw foreshortening (`facingCos`),
+ * prosodic syllable-driven speech gestures, and articulated hand/thumb geometry.
+ */
+export function resolveBiomechanicalHumanPose(
+  angles: LimbAngles,
+  action: StickmanAction,
+  progress: number,
+  elapsedSec?: number,
+  beatProgress: number = 0.5,
+  velocityX: number = 0,
+  motionContext?: MotionVariationContext,
+  handTargetLocal?: { x: number; y: number; blend: number; hand?: 'left' | 'right' },
+  prosodicEnvelope?: ProsodicSpeechEnvelope,
+  facingCos: number = 1
+): BiomechanicalHumanPose {
+  const sec = elapsedSec !== undefined ? elapsedSec : progress * 4.8;
+  const rawSeed = motionContext?.seed ? Math.abs(Math.trunc(motionContext.seed)) : 0;
+  const seedPhase = rawSeed > 0 ? ((rawSeed % 997) / 997) * Math.PI * 2 : 0;
+
+  const isSeated =
+    action === 'drive_car' ||
+    action === 'car_chase' ||
+    action === 'car_drift' ||
+    action === 'car_police' ||
+    action === 'motorcycle' ||
+    action === 'work_computer';
+
+  const isLocomotion =
+    action === 'walk_city' ||
+    action === 'walking' ||
+    action === 'running' ||
+    action === 'scavenge_supplies';
+
+  const isAirborneOrFall =
+    action === 'dramatic_fall' ||
+    action === 'money_celebrate' ||
+    (action === 'fight_kungfu' && angles.verticalOffset < -8);
+
+  const legLenUpper = 38;
+  const legLenLower = 38;
+  const footLen = 12;
+  const spineLength = 56;
+
+  // Breathing ribcage expansion + band-limited Perlin micro-breath
+  const chestBreath =
+    Math.sin(sec * 2.1 + seedPhase * 0.3) * 1.3 +
+    organicPerlin1D(sec * 0.9, rawSeed + 53) * 0.6;
+
+  // 2.5D Yaw Foreshortening: narrows shoulder & hip width smoothly during 3/4 turns
+  const absFacing = Math.max(0.32, Math.min(1, Math.abs(facingCos)));
+  const foreshortenFactor = 0.45 + 0.55 * absFacing;
+
+  // Center-of-Mass (COM) Inertial Balance & Inman Gait Pelvis Dynamics
+  const weightShift = motionContext?.weightShift ?? 0;
+  const inertialLean = Math.max(-0.18, Math.min(0.18, velocityX * 0.42));
+  const effectiveBodyLean = angles.bodyLean + inertialLean * 0.55;
+
+  const isRun = action === 'running';
+  const gaitCycle = sec * Math.PI * (isRun ? 1.35 : 0.95) + seedPhase * 0.25;
+  // Inman's vertical pelvis oscillation: peaks at mid-stance (2x gait frequency), cushions at heel strike
+  const gaitPelvisBounce = isLocomotion
+    ? -Math.abs(Math.cos(gaitCycle)) * (isRun ? 4.2 : 2.4) + (isRun ? 1.8 : 1.0)
+    : 0;
+
+  const pelvisX = Math.sin(effectiveBodyLean) * 4.5 + weightShift * 3.8;
+  const pelvisY = -74 + angles.verticalOffset + gaitPelvisBounce;
+  const pelvisTilt =
+    (angles.leftLegUpper - angles.rightLegUpper) * 0.14 + weightShift * 0.08;
+
+  const hipHalfWidth = 5.6 * foreshortenFactor;
+  const leftHipX = pelvisX - Math.cos(pelvisTilt) * hipHalfWidth;
+  const leftHipY = pelvisY - Math.sin(pelvisTilt) * hipHalfWidth;
+  const rightHipX = pelvisX + Math.cos(pelvisTilt) * hipHalfWidth;
+  const rightHipY = pelvisY + Math.sin(pelvisTilt) * hipHalfWidth;
+
+  // Prosodic speech gesture modulation (natural syllable beats when speaking)
+  const speechBeat =
+    prosodicEnvelope && !prosodicEnvelope.isBreathPause
+      ? prosodicEnvelope.syllablePulse * (0.65 + prosodicEnvelope.emphasisBoost * 0.55)
+      : 0;
+
+  // 3-Segment Anatomical S-Spine (Pelvis -> Lumbar -> Thorax -> Neck)
+  const neckX =
+    pelvisX +
+    Math.sin(effectiveBodyLean) * spineLength +
+    speechBeat * 1.4;
+  const neckY =
+    pelvisY -
+    Math.cos(effectiveBodyLean) * spineLength -
+    (angles.shoulderShrug || 0);
+
+  const spineCurveOffset = (angles.spineCurve || 0) * 24;
+  const lumbarX = pelvisX * 0.65 + neckX * 0.35 + spineCurveOffset * 0.55;
+  const lumbarY = pelvisY * 0.65 + neckY * 0.35;
+  const thoraxX = pelvisX * 0.28 + neckX * 0.72 + spineCurveOffset * 0.85;
+  const thoraxY = pelvisY * 0.28 + neckY * 0.72;
+
+  // Clavicle / Bi-deltoid Shoulder Girdle with natural counter-swing & 2.5D foreshortening
+  const armCounterTwist = (angles.rightArmUpper - angles.leftArmUpper) * 0.14;
+  const shoulderCenterY = neckY + 8.5;
+  const shoulderSpan = (7.8 + chestBreath * 0.25) * foreshortenFactor;
+  const leftShoulderX = neckX - Math.cos(armCounterTwist) * shoulderSpan;
+  const leftShoulderY = shoulderCenterY - Math.sin(armCounterTwist) * 2.6;
+  const rightShoulderX = neckX + Math.cos(armCounterTwist) * shoulderSpan;
+  const rightShoulderY = shoulderCenterY + Math.sin(armCounterTwist) * 2.6;
+
+  // Resolve Legs: FK baseline + Analytical 2-Bone IK Foot-Planting
+  const fkKneeLX = leftHipX + Math.sin(angles.leftLegUpper) * legLenUpper;
+  const fkKneeLY = leftHipY + Math.cos(angles.leftLegUpper) * legLenUpper;
+  const fkAnkleLX =
+    fkKneeLX + Math.sin(angles.leftLegUpper + angles.leftLegLower) * legLenLower;
+  const fkAnkleLY =
+    fkKneeLY + Math.cos(angles.leftLegUpper + angles.leftLegLower) * legLenLower;
+
+  const fkKneeRX = rightHipX + Math.sin(angles.rightLegUpper) * legLenUpper;
+  const fkKneeRY = rightHipY + Math.cos(angles.rightLegUpper) * legLenUpper;
+  const fkAnkleRX =
+    fkKneeRX + Math.sin(angles.rightLegUpper + angles.rightLegLower) * legLenLower;
+  const fkAnkleRY =
+    fkKneeRY + Math.cos(angles.rightLegUpper + angles.rightLegLower) * legLenLower;
+
+  let kneeLX = fkKneeLX;
+  let kneeLY = fkKneeLY;
+  let ankleLX = fkAnkleLX;
+  let ankleLY = fkAnkleLY;
+  let plantedL = false;
+
+  let kneeRX = fkKneeRX;
+  let kneeRY = fkKneeRY;
+  let ankleRX = fkAnkleRX;
+  let ankleRY = fkAnkleRY;
+  let plantedR = false;
+
+  if (!isSeated && !isAirborneOrFall) {
+    if (isLocomotion) {
+      // Natural Human Gait Cycle via 2-Bone IK: Stance foot locks on ground (y = -2), Swing foot arcs with heel-to-toe clearance
+      const strideSpan = isRun ? 28 : 20;
+      const liftHeight = isRun ? 21 : 12.5;
+
+      const phaseL = Math.sin(gaitCycle);
+      const rawSwingL = Math.cos(gaitCycle);
+      // Smooth asymmetric swing clearance curve (sharper toe-off lift, gentle heel descent)
+      const liftL = rawSwingL > 0 ? Math.pow(rawSwingL, 1.25) : 0;
+      const targetAnkleLX = leftHipX + phaseL * strideSpan;
+      const targetAnkleLY = Math.min(-2, -2 - liftL * liftHeight);
+      const ikL = solveTwoBoneIK(
+        leftHipX,
+        leftHipY,
+        targetAnkleLX,
+        targetAnkleLY,
+        legLenUpper,
+        legLenLower,
+        1
+      );
+      kneeLX = ikL.midX;
+      kneeLY = ikL.midY;
+      ankleLX = ikL.endX;
+      ankleLY = ikL.endY;
+      plantedL = liftL < 0.16;
+
+      const phaseR = Math.sin(gaitCycle + Math.PI);
+      const rawSwingR = Math.cos(gaitCycle + Math.PI);
+      const liftR = rawSwingR > 0 ? Math.pow(rawSwingR, 1.25) : 0;
+      const targetAnkleRX = rightHipX + phaseR * strideSpan;
+      const targetAnkleRY = Math.min(-2, -2 - liftR * liftHeight);
+      const ikR = solveTwoBoneIK(
+        rightHipX,
+        rightHipY,
+        targetAnkleRX,
+        targetAnkleRY,
+        legLenUpper,
+        legLenLower,
+        1
+      );
+      kneeRX = ikR.midX;
+      kneeRY = ikR.midY;
+      ankleRX = ikR.endX;
+      ankleRY = ikR.endY;
+      plantedR = liftR < 0.16;
+    } else {
+      // Grounded stance: plant feet firmly on the ground plane (y = -2) via 2-bone IK
+      // so knees flex naturally when pelvis dips or shifts weight, and feet never penetrate ground!
+      const targetLX = fkAnkleLX;
+      const targetLY = Math.min(-2, fkAnkleLY);
+      const ikL = solveTwoBoneIK(
+        leftHipX,
+        leftHipY,
+        targetLX,
+        targetLY,
+        legLenUpper,
+        legLenLower,
+        1
+      );
+      kneeLX = ikL.midX;
+      kneeLY = ikL.midY;
+      ankleLX = ikL.endX;
+      ankleLY = ikL.endY;
+      plantedL = Math.abs(ankleLY + 2) < 3.5;
+
+      const targetRX = fkAnkleRX;
+      const targetRY = Math.min(-2, fkAnkleRY);
+      const ikR = solveTwoBoneIK(
+        rightHipX,
+        rightHipY,
+        targetRX,
+        targetRY,
+        legLenUpper,
+        legLenLower,
+        1
+      );
+      kneeRX = ikR.midX;
+      kneeRY = ikR.midY;
+      ankleRX = ikR.endX;
+      ankleRY = ikR.endY;
+      plantedR = Math.abs(ankleRY + 2) < 3.5;
+    }
+  }
+
+  // Foot / Toe articulation (flat on ground when planted, natural dorsiflexion/plantarflexion in air)
+  const ankleAngleL = plantedL
+    ? Math.PI * 0.48
+    : angles.leftLegUpper + angles.leftLegLower + 1.35 + (angles.leftAnkleFlex || 0);
+  const toeLX = ankleLX + Math.sin(ankleAngleL) * footLen;
+  const toeLY = plantedL ? Math.min(0, ankleLY + 2) : ankleLY + Math.cos(ankleAngleL) * footLen;
+
+  const ankleAngleR = plantedR
+    ? Math.PI * 0.48
+    : angles.rightLegUpper + angles.rightLegLower + 1.35 + (angles.rightAnkleFlex || 0);
+  const toeRX = ankleRX + Math.sin(ankleAngleR) * footLen;
+  const toeRY = plantedR ? Math.min(0, ankleRY + 2) : ankleRY + Math.cos(ankleAngleR) * footLen;
+
+  // Arms: Upper Arm -> Forearm -> Wrist/Hand with prosodic speech pulse & optional 2-bone IK target blend
+  const armLenUpper = 32;
+  const armLenLower = 28;
+  const handLen = 9.5;
+
+  const prosodicArmLiftL = speechBeat * 0.11;
+  const prosodicArmLiftR = speechBeat * 0.16;
+  const prosodicWristOpen = speechBeat * 0.18;
+
+  const effLeftUpper = angles.leftArmUpper + prosodicArmLiftL;
+  const effLeftLower = angles.leftArmLower - prosodicArmLiftL * 0.6;
+  const effRightUpper = angles.rightArmUpper + prosodicArmLiftR;
+  const effRightLower = angles.rightArmLower - prosodicArmLiftR * 0.7;
+
+  let elbowLX = leftShoulderX + Math.sin(effLeftUpper) * armLenUpper;
+  let elbowLY = leftShoulderY + Math.cos(effLeftUpper) * armLenUpper;
+  let wristLX =
+    elbowLX + Math.sin(effLeftUpper + effLeftLower) * armLenLower;
+  let wristLY =
+    elbowLY + Math.cos(effLeftUpper + effLeftLower) * armLenLower;
+  let wristAngleL =
+    effLeftUpper + effLeftLower + (angles.leftWristFlex || 0) - prosodicWristOpen * 0.5;
+
+  let elbowRX = rightShoulderX + Math.sin(effRightUpper) * armLenUpper;
+  let elbowRY = rightShoulderY + Math.cos(effRightUpper) * armLenUpper;
+  let wristRX =
+    elbowRX + Math.sin(effRightUpper + effRightLower) * armLenLower;
+  let wristRY =
+    elbowRY + Math.cos(effRightUpper + effRightLower) * armLenLower;
+  let wristAngleR =
+    effRightUpper + effRightLower + (angles.rightWristFlex || 0) + prosodicWristOpen;
+
+  if (handTargetLocal && handTargetLocal.blend > 0.01) {
+    const b = Math.max(0, Math.min(1, handTargetLocal.blend));
+    if (handTargetLocal.hand === 'left') {
+      const ikArmL = solveTwoBoneIK(
+        leftShoulderX,
+        leftShoulderY,
+        handTargetLocal.x,
+        handTargetLocal.y,
+        armLenUpper,
+        armLenLower,
+        -1
+      );
+      elbowLX = elbowLX + (ikArmL.midX - elbowLX) * b;
+      elbowLY = elbowLY + (ikArmL.midY - elbowLY) * b;
+      wristLX = wristLX + (ikArmL.endX - wristLX) * b;
+      wristLY = wristLY + (ikArmL.endY - wristLY) * b;
+      wristAngleL = ikArmL.upperAngle + ikArmL.lowerAngle;
+    } else {
+      const ikArmR = solveTwoBoneIK(
+        rightShoulderX,
+        rightShoulderY,
+        handTargetLocal.x,
+        handTargetLocal.y,
+        armLenUpper,
+        armLenLower,
+        -1
+      );
+      elbowRX = elbowRX + (ikArmR.midX - elbowRX) * b;
+      elbowRY = elbowRY + (ikArmR.midY - elbowRY) * b;
+      wristRX = wristRX + (ikArmR.endX - wristRX) * b;
+      wristRY = wristRY + (ikArmR.endY - wristRY) * b;
+      wristAngleR = ikArmR.upperAngle + ikArmR.lowerAngle;
+    }
+  }
+
+  const handLX = wristLX + Math.sin(wristAngleL) * handLen;
+  const handLY = wristLY + Math.cos(wristAngleL) * handLen;
+  const handRX = wristRX + Math.sin(wristAngleR) * handLen;
+  const handRY = wristRY + Math.cos(wristAngleR) * handLen;
+
+  // Articulated thumb and index/finger silhouettes (open slightly during speech emphasis)
+  const fingerSpread = 0.42 + speechBeat * 0.16;
+  const thumbLX = wristLX + Math.sin(wristAngleL - fingerSpread) * (handLen * 0.68);
+  const thumbLY = wristLY + Math.cos(wristAngleL - fingerSpread) * (handLen * 0.68);
+  const fingerLX = handLX + Math.sin(wristAngleL + 0.12) * 3.8;
+  const fingerLY = handLY + Math.cos(wristAngleL + 0.12) * 3.8;
+
+  const thumbRX = wristRX + Math.sin(wristAngleR - fingerSpread) * (handLen * 0.68);
+  const thumbRY = wristRY + Math.cos(wristAngleR - fingerSpread) * (handLen * 0.68);
+  const fingerRX = handRX + Math.sin(wristAngleR + 0.12) * 3.8;
+  const fingerRY = handRY + Math.cos(wristAngleR + 0.12) * 3.8;
+
+  const headRadius = 18;
+  const headTilt =
+    (angles.headTilt || 0) +
+    velocityX * 0.08 +
+    speechBeat * 0.06;
+  const headCenterX = neckX + Math.sin(effectiveBodyLean + headTilt) * 16;
+  const headCenterY = neckY - headRadius + angles.headBob + speechBeat * 1.1;
+
+  return {
+    pelvisX,
+    pelvisY,
+    pelvisTilt,
+    leftHipX,
+    leftHipY,
+    rightHipX,
+    rightHipY,
+    lumbarX,
+    lumbarY,
+    thoraxX,
+    thoraxY,
+    neckX,
+    neckY,
+    leftShoulderX,
+    leftShoulderY,
+    rightShoulderX,
+    rightShoulderY,
+    headCenterX,
+    headCenterY,
+    headTilt,
+    chestBreath,
+    leftLeg: {
+      kneeX: kneeLX,
+      kneeY: kneeLY,
+      ankleX: ankleLX,
+      ankleY: ankleLY,
+      toeX: toeLX,
+      toeY: toeLY,
+      planted: plantedL,
+    },
+    rightLeg: {
+      kneeX: kneeRX,
+      kneeY: kneeRY,
+      ankleX: ankleRX,
+      ankleY: ankleRY,
+      toeX: toeRX,
+      toeY: toeRY,
+      planted: plantedR,
+    },
+    leftArm: {
+      elbowX: elbowLX,
+      elbowY: elbowLY,
+      wristX: wristLX,
+      wristY: wristLY,
+      handX: handLX,
+      handY: handLY,
+      thumbX: thumbLX,
+      thumbY: thumbLY,
+      fingerX: fingerLX,
+      fingerY: fingerLY,
+      wristAngle: wristAngleL,
+    },
+    rightArm: {
+      elbowX: elbowRX,
+      elbowY: elbowRY,
+      wristX: wristRX,
+      wristY: wristRY,
+      handX: handRX,
+      handY: handRY,
+      thumbX: thumbRX,
+      thumbY: thumbRY,
+      fingerX: fingerRX,
+      fingerY: fingerRY,
+      wristAngle: wristAngleR,
+    },
+  };
+}
+
+

@@ -15,6 +15,7 @@ import {
   inferContextFromText,
   seededUnitFloat,
 } from './cinematicDirector';
+import { minimumJerkEase } from './stickmanMath';
 
 export interface ActiveBeatFrameState {
   beatIndex: number;
@@ -30,6 +31,7 @@ export interface ActiveBeatFrameState {
   char2JumpOffsetY: number;
   flipChar1: boolean;
   flipChar2: boolean;
+  facingCos1: number; // continuous 2.5D yaw foreshortening factor in [-1..1]
   effectiveAction1: StickmanAction;
   prevAction1: StickmanAction;
   effectiveAction2: StickmanAction;
@@ -765,11 +767,12 @@ export function resolveActiveBeatState(
   const beatLen = Math.max(0.1, beat.endTime - beat.startTime);
   const beatProgress = Math.max(0, Math.min(1, (elapsedInSceneSec - beat.startTime) / beatLen));
 
-  // Smooth pose transition blend over the first 45% of each beat so poses flow calmly
-  const transitionBlend = Math.min(1, beatProgress / 0.45);
+  // Smooth C2 minimum-jerk pose transition blend over the first 48% of each beat so poses flow organically
+  const rawBlend = Math.min(1, beatProgress / 0.48);
+  const transitionBlend = minimumJerkEase(rawBlend);
 
-  // Smooth cosine ease
-  const ease = 0.5 - 0.5 * Math.cos(beatProgress * Math.PI);
+  // Flash & Hogan Minimum-Jerk 5th-order polynomial trajectory (zero velocity & zero acceleration jerk at endpoints)
+  const ease = minimumJerkEase(beatProgress);
 
   const char1XNorm = beat.fromX + (beat.toX - beat.fromX) * ease;
   const c2From = beat.char2FromX ?? 0.72;
@@ -777,7 +780,9 @@ export function resolveActiveBeatState(
   const char2XNorm = c2From + (c2To - c2From) * ease;
 
   const dx = beat.toX - beat.fromX;
-  const velocityX = (dx * Math.sin(beatProgress * Math.PI)) / Math.max(0.6, beatLen);
+  // Exact derivative of minimum-jerk polynomial: 30 * t^2 * (1 - t)^2
+  const minJerkDeriv = 30 * beatProgress * beatProgress * (1 - beatProgress) * (1 - beatProgress);
+  const velocityX = (dx * minJerkDeriv * 0.55) / Math.max(0.6, beatLen);
 
   // Parabolic jump arc: peaks at center of beat
   const parabola = 4 * beatProgress * (1 - beatProgress);
@@ -791,7 +796,20 @@ export function resolveActiveBeatState(
     beat.action === 'car_police' ||
     beat.action === 'motorcycle';
 
-  const flipChar1 = isVehicle ? false : dx < -0.05;
+  const prevDx = prevBeat.toX - prevBeat.fromX;
+  const prevFlipChar1 = isVehicle ? false : prevDx < -0.05;
+  const targetFlipChar1 = isVehicle ? false : dx < -0.05;
+
+  // Continuous 2.5D turnaround foreshortening over the first 28% of a direction-changing beat
+  let facingCos1 = targetFlipChar1 ? -1 : 1;
+  if (!isVehicle && activeIndex > 0 && prevFlipChar1 !== targetFlipChar1 && beatProgress < 0.28) {
+    const turnAlpha = minimumJerkEase(beatProgress / 0.28);
+    const startSign = prevFlipChar1 ? -1 : 1;
+    const endSign = targetFlipChar1 ? -1 : 1;
+    facingCos1 = startSign + (endSign - startSign) * turnAlpha;
+  }
+
+  const flipChar1 = facingCos1 < 0;
   const flipChar2 = isVehicle ? false : true;
 
   const fallbackSceneSeed =
@@ -826,6 +844,7 @@ export function resolveActiveBeatState(
     char2JumpOffsetY,
     flipChar1,
     flipChar2,
+    facingCos1,
     effectiveAction1: beat.action,
     prevAction1: beat.prevAction || prevBeat.action,
     effectiveAction2: beat.char2Action || scene.character2?.action || 'fight_kungfu',

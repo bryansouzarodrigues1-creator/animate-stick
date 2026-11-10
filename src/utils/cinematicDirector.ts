@@ -1362,8 +1362,8 @@ export function validateAndNormalizeScenePlan(
   }
 
   const limitations: string[] = [
-    'atmosphereMetadataOnly: timeOfDay, weatherOrAtmosphere e lightingMood são preservados no contrato semântico; o renderer 2D atual desenha o tema procedural (EnvironmentTheme) e VisualFilter.',
-    'objectsMetadataOnly: objectRefs e contactConstraints são metadados semânticos; a colisão física arbitrária e IK de pés/mãos não estão ativas no Canvas 2D.',
+    'biomechanical2BoneIKActive: O solver analítico de 2 ossos (solveTwoBoneIK) realiza foot-planting no plano do solo e alcance de âncoras de cenário (SceneAnchors), mas não executa malha de colisão física rígida arbitrária.',
+    'proceduralEnvironmentCatalog: O renderer 2D executa todos os 21 temas procedurais, partículas climáticas (rain, fog, toxic_mist, smoke_ash) e iluminação volumétrica (lightingMood), mas não sintetiza geometria 3D fora do catálogo.',
   ];
 
   const scenePlan: CinematicScenePlan = {
@@ -1386,9 +1386,9 @@ export function validateAndNormalizeScenePlan(
         : inferred.objectRefs,
       rendererSupport: {
         themeSupported: true,
-        atmosphereMetadataOnly: true,
-        lightingMetadataOnly: true,
-        objectsMetadataOnly: true,
+        atmosphereMetadataOnly: false,
+        lightingMetadataOnly: false,
+        objectsMetadataOnly: false,
       },
     },
     cameraPlan: {
