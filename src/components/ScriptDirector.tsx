@@ -47,6 +47,9 @@ interface ScriptDirectorProps {
 }
 
 const ACTION_OPTIONS: { label: string; value: StickmanAction }[] = [
+  { label: '🇧🇷 Correr ao Lado do Caminhão 6x6 FEB (2.5D)', value: 'truck_run_alongside' },
+  { label: '💥 Cobertura no Caminhão & Disparo Garand (2.5D)', value: 'trench_cover_fire' },
+  { label: '🎖️ Subir na Traseira do Caminhão em Movimento', value: 'truck_board_convoy' },
   { label: '🧟 Defender Barricada & Sobreviver (Zumbi)', value: 'zombie_survive_barricade' },
   { label: '💎 Comprar Tudo: Jatos, Ilhas & Mansões (1 Trilhão)', value: 'trillion_buy_everything' },
   { label: '🎒 Explorar Cenário & Coletar Suprimentos', value: 'scavenge_supplies' },
@@ -81,6 +84,7 @@ const EXPRESSION_OPTIONS: { label: string; value: StickmanExpression }[] = [
 ];
 
 const ENVIRONMENT_OPTIONS: { label: string; value: EnvironmentTheme }[] = [
+  { label: '🇧🇷 2ª Guerra Mundial: Monte Castello (Caminhão 6x6 & Trincheira 2.5D)', value: 'ww2_battlefield' },
   { label: '🧟 Apocalipse Zumbi (Barricada, Horda & Helicóptero)', value: 'zombie_apocalypse' },
   { label: '💎 Desafio 1 Trilhão em 1 Mês (Jatos, Iates & Entregas)', value: 'trillionaire_sandbox' },
   { label: '🛡️ Bunker Subterrâneo & Radar de Sobrevivência', value: 'bunker_survival' },

@@ -1106,6 +1106,82 @@ export function calculateLimbAngles(
       break;
     }
 
+    case 'truck_run_alongside': {
+      // Tactical combat run alongside moving military truck holding M1 Garand at port-arms
+      const stride = Math.sin(t * 1.45);
+      const oppStride = -stride;
+      const blastDuck = beatIndex === 2 ? Math.sin(beatProgress * Math.PI) * 0.16 : 0;
+      base = {
+        leftArmUpper: 0.72 + stride * 0.22 + oscL * 0.08,
+        leftArmLower: -0.95 + Math.cos(t * 1.45 - 0.18) * 0.16,
+        rightArmUpper: 0.42 + oppStride * 0.24 + oscR * 0.08,
+        rightArmLower: -0.88 + Math.sin(t * 1.45 - 0.18) * 0.15,
+        leftLegUpper: stride * 0.82,
+        leftLegLower: Math.max(0.14, -stride * 0.72 + 0.35),
+        rightLegUpper: oppStride * 0.82,
+        rightLegLower: Math.max(0.14, -oppStride * 0.72 + 0.35),
+        bodyLean: 0.24 + blastDuck + Math.sin(t * 2.9) * 0.04,
+        headBob: Math.sin(t * 2.9) * 0.08 + speechBob,
+        verticalOffset: Math.abs(stride) * -5.5 + blastDuck * 24,
+        spineCurve: 0.14 + blastDuck * 0.3,
+        leftWristFlex: wristWhipL * 0.25,
+        rightWristFlex: wristWhipR * 0.25,
+        leftAnkleFlex: stride * 0.32,
+        rightAnkleFlex: oppStride * 0.32,
+        shoulderShrug: blastDuck * 2.5,
+        headTilt: 0.08,
+      };
+      break;
+    }
+
+    case 'trench_cover_fire': {
+      // Tactical crouched stance beside truck wheel-arch / sandbag wall, aiming & firing rifle with recoil
+      const recoilKick = Math.max(0, Math.sin(t * 5.2)) * 0.14;
+      const crouchPulse = 0.28 + Math.sin(t * 0.85 + beatSeed) * 0.08;
+      base = {
+        leftArmUpper: 1.18 - recoilKick * 0.5,
+        leftArmLower: -0.45 - recoilKick * 0.3,
+        rightArmUpper: 0.86 - recoilKick * 0.6,
+        rightArmLower: -0.78 + recoilKick * 0.4,
+        leftLegUpper: 0.68 + crouchPulse,
+        leftLegLower: -0.62 - crouchPulse * 0.8,
+        rightLegUpper: -0.45,
+        rightLegLower: 0.58,
+        bodyLean: 0.28 - recoilKick * 0.35,
+        headBob: 0.14 + recoilKick * 0.12 + speechBob,
+        verticalOffset: 14 + crouchPulse * 12,
+        spineCurve: 0.18,
+        leftWristFlex: 0.12,
+        rightWristFlex: -recoilKick * 0.4,
+        shoulderShrug: 1.6,
+        headTilt: 0.12 - recoilKick * 0.15,
+      };
+      break;
+    }
+
+    case 'truck_board_convoy': {
+      // Sprinting and vaulting onto the rear tailgate of the moving military truck
+      const vaultPhase = minimumJerkEase(Math.min(1, beatProgress * 1.3));
+      const stride = Math.sin(t * 1.55);
+      base = {
+        leftArmUpper: -0.85 * vaultPhase + (1 - vaultPhase) * (stride * 0.65),
+        leftArmLower: -0.55,
+        rightArmUpper: 0.55 + Math.cos(t * 1.55) * 0.25,
+        rightArmLower: -0.82,
+        leftLegUpper: 0.88 * vaultPhase + (1 - vaultPhase) * stride * 0.75,
+        leftLegLower: -0.75 * vaultPhase + 0.25,
+        rightLegUpper: -0.35 * vaultPhase - (1 - vaultPhase) * stride * 0.75,
+        rightLegLower: 0.45,
+        bodyLean: 0.26 - vaultPhase * 0.12,
+        headBob: speechBob - vaultPhase * 0.08,
+        verticalOffset: -Math.sin(vaultPhase * Math.PI) * 14,
+        spineCurve: 0.15,
+        leftWristFlex: 0.2,
+        rightWristFlex: 0.15,
+      };
+      break;
+    }
+
     default:
       base = {
         leftArmUpper: 0.18 + oscL * 0.2,
@@ -1475,6 +1551,25 @@ export function getSceneAnchors(
         },
       };
 
+    case 'ww2_battlefield':
+      return {
+        groundY: height * 0.74,
+        horizonY: height * 0.54,
+        interactionAnchor: {
+          x: width * 0.48,
+          y: height * 0.74 - 42,
+          type: 'barricade',
+          label: 'Caminhão Militar 6x6 FEB & Trincheira',
+        },
+        lightSource: {
+          x: width * 0.68,
+          y: height * 0.24,
+          color: '#FB923C',
+          ambientTint: 'rgba(249, 115, 22, 0.16)',
+          intensity: 0.92,
+        },
+      };
+
     default:
       return {
         groundY,
@@ -1593,7 +1688,9 @@ export function resolveBiomechanicalHumanPose(
     action === 'walk_city' ||
     action === 'walking' ||
     action === 'running' ||
-    action === 'scavenge_supplies';
+    action === 'scavenge_supplies' ||
+    action === 'truck_run_alongside' ||
+    action === 'truck_board_convoy';
 
   const isAirborneOrFall =
     action === 'dramatic_fall' ||
@@ -1619,7 +1716,10 @@ export function resolveBiomechanicalHumanPose(
   const inertialLean = Math.max(-0.18, Math.min(0.18, velocityX * 0.42));
   const effectiveBodyLean = angles.bodyLean + inertialLean * 0.55;
 
-  const isRun = action === 'running';
+  const isRun =
+    action === 'running' ||
+    action === 'truck_run_alongside' ||
+    action === 'truck_board_convoy';
   const gaitCycle = sec * Math.PI * (isRun ? 1.35 : 0.95) + seedPhase * 0.25;
   // Inman's vertical pelvis oscillation: peaks at mid-stance (2x gait frequency), cushions at heel strike
   const gaitPelvisBounce = isLocomotion

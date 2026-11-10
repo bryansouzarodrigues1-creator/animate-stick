@@ -1,6 +1,108 @@
 import { StickmanProject } from '../types/stickman';
 
 export const PRESET_PROJECTS: Record<string, StickmanProject> = {
+  ww2_brazilian_soldier_feb: {
+    id: 'preset_ww2_feb_monte_castello',
+    title: 'Soldado Brasileiro na 2ª Guerra: Monte Castello (FEB)',
+    description:
+      'Prova de conceito cinematográfica 2.5D com Construtor de Cenas: caminhão militar 6x6 volumétrico com suspensão na lama, soldado da FEB com capacete M1 e fuzil Garand, corrida sincronizada, cobertura física, ondas de choque de artilharia e câmera em travelling.',
+    aspectRatio: '16:9',
+    author: 'StickStory War Director 2.5D',
+    voiceGender: 'male',
+    voiceSpeed: 1.04,
+    wordsPerMinute: 155,
+    scenes: [
+      {
+        id: 'feb_s1',
+        chapter: 'Ato 1: O Comboio na Lama',
+        title: 'Cena 1: Avançando ao Lado do Caminhão 6x6 da FEB',
+        duration: 6.5,
+        narration:
+          'Inverno de mil novecentos e quarenta e cinco na Itália! O caminhão seis por seis da Força Expedicionária Brasileira rasga a lama congelada de Monte Castello enquanto nosso soldado corre lado a lado com a carroceria mantendo o fuzil Garand pronto!',
+        character1: {
+          name: 'Pracinha da FEB',
+          color: '#3F4E30',
+          action: 'truck_run_alongside',
+          expression: 'determined',
+          prop: 'rifle',
+          equipment: ['helmet_m1', 'tactical_pack', 'webbing_belt'],
+          position: 'center',
+        },
+        environment: 'ww2_battlefield',
+        cameraEffect: 'pan_right',
+        soundEffect: 'car_engine',
+        visualFilter: 'cinemascope',
+        highlightWords: ['quarenta e cinco', 'Força Expedicionária', 'Monte Castello', 'fuzil Garand'],
+      },
+      {
+        id: 'feb_s2',
+        chapter: 'Ato 2: Tensão e Emboscada',
+        title: 'Cena 2: Artilharia Pesada e Cobertura no Caminhão',
+        duration: 6.5,
+        narration:
+          'De repente a artilharia alemã explode na estrada! O caminhão crava os freios na lama e o soldado muda de direção no mesmo instante, apoiando no paralama blindado como escudo físico para responder ao fogo inimigo!',
+        character1: {
+          name: 'Pracinha da FEB',
+          color: '#3F4E30',
+          action: 'trench_cover_fire',
+          expression: 'intense',
+          prop: 'rifle',
+          equipment: ['helmet_m1', 'tactical_pack', 'webbing_belt'],
+          position: 'center',
+        },
+        environment: 'ww2_battlefield',
+        cameraEffect: 'shake',
+        soundEffect: 'gun_shot',
+        visualFilter: 'cinemascope',
+        highlightWords: ['artilharia', 'explode', 'paralama blindado', 'responder ao fogo'],
+      },
+      {
+        id: 'feb_s3',
+        chapter: 'Ato 3: O Clímax do Assalto',
+        title: 'Cena 3: Rompendo a Linha Sob Fogo Cruzado',
+        duration: 6.0,
+        narration:
+          'Sem recuar um centímetro, o pelotão avança entre a fumaça densa e os muros destruídos! Ele salta sobre as crateras de lama acompanhando o avanço pesado do caminhão até romper a última trincheira!',
+        character1: {
+          name: 'Pracinha da FEB',
+          color: '#3F4E30',
+          action: 'truck_run_alongside',
+          expression: 'angry',
+          prop: 'rifle',
+          equipment: ['helmet_m1', 'tactical_pack', 'webbing_belt'],
+          position: 'center',
+        },
+        environment: 'ww2_battlefield',
+        cameraEffect: 'zoom_in',
+        soundEffect: 'dramatic_boom',
+        visualFilter: 'cinemascope',
+        highlightWords: ['Sem recuar', 'fumaça densa', 'crateras', 'última trincheira'],
+      },
+      {
+        id: 'feb_s4',
+        chapter: 'Ato 4: A Cobra Fumou',
+        title: 'Cena 4: Embarque em Movimento e Tomada do Cume',
+        duration: 6.0,
+        narration:
+          'Monte Castello foi tomado! O soldado alcança a traseira do caminhão em movimento, agarra a prancha de aço e embarca com o comboio brasileiro rumo à vitória histórica!',
+        character1: {
+          name: 'Pracinha da FEB',
+          color: '#3F4E30',
+          action: 'truck_board_convoy',
+          expression: 'confident',
+          prop: 'rifle',
+          equipment: ['helmet_m1', 'tactical_pack', 'webbing_belt'],
+          position: 'center',
+        },
+        environment: 'ww2_battlefield',
+        cameraEffect: 'pan_right',
+        soundEffect: 'car_engine',
+        visualFilter: 'cinemascope',
+        highlightWords: ['Monte Castello', 'traseira do caminhão', 'embarca', 'vitória histórica'],
+      },
+    ],
+  },
+
   car_chase_action: {
     id: 'preset_car_chase',
     title: 'A Grande Fuga: Perseguição de Carros',

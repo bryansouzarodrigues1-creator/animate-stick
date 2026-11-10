@@ -48,6 +48,9 @@ export const VALID_ACTIONS: readonly StickmanAction[] = [
   'trillion_buy_everything',
   'scavenge_supplies',
   'command_crowd',
+  'truck_run_alongside',
+  'trench_cover_fire',
+  'truck_board_convoy',
 ];
 
 export const VALID_EXPRESSIONS: readonly StickmanExpression[] = [
@@ -63,6 +66,7 @@ export const VALID_EXPRESSIONS: readonly StickmanExpression[] = [
 ];
 
 export const VALID_ENVIRONMENTS: readonly EnvironmentTheme[] = [
+  'ww2_battlefield',
   'zombie_apocalypse',
   'trillionaire_sandbox',
   'bunker_survival',
@@ -176,6 +180,7 @@ export const VALID_PROPS: readonly NonNullable<SceneCharacter['prop']>[] = [
   'sunglasses',
   'briefcase',
   'book',
+  'rifle',
 ];
 
 export const VALID_DRAMATIC_INTENTS: readonly DramaticIntent[] = [
@@ -276,6 +281,10 @@ export function inferContextFromText(
   const seed = customSeed ?? computeDeterministicSeed(combined);
 
   // 1. Detect thematic domain from text content (never by scene index)
+  const isWarBattlefield =
+    /soldado|caminh[aã]o|guerra|feb|monte castello|trincheira|artilharia|fuzil|pelot[aã]o|comboio|ex[eé]rcito|batalh[aã]o|segunda guerra|capacete/.test(
+      combined
+    );
   const isZombieSurvival =
     /zumbi|apocalipse|infect|horda|barricada|sobreviv|vírus|abrigo|bunker/.test(combined);
   const isVehiclePursuit =
@@ -311,6 +320,50 @@ export function inferContextFromText(
   const hasExclamation = /!/.test(narration);
   const hasQuestion = /\?/.test(narration);
   const seedVar = (seededUnitFloat(seed, 1) - 0.5) * 0.14;
+
+  if (isWarBattlefield) {
+    const isCoverFire = /trincheira|proteg|cobertura|explos|artilharia|emboscada|fogo|atir|dispar|muro/.test(
+      combined
+    );
+    const isBoardingConvoy = /subi|embarc|traseira|vitori|conquista|avançamos|tomamos|cume/.test(
+      combined
+    );
+    return {
+      dramaticIntent: isBoardingConvoy
+        ? 'triumph_celebration'
+        : isCoverFire
+        ? 'climax_confrontation'
+        : 'escalate_tension',
+      emotionalState: isBoardingConvoy
+        ? 'triumphant'
+        : isCoverFire
+        ? 'urgent'
+        : 'determined',
+      action: isBoardingConvoy
+        ? 'truck_board_convoy'
+        : isCoverFire
+        ? 'trench_cover_fire'
+        : 'truck_run_alongside',
+      secondaryAction: 'trench_cover_fire',
+      expression: isCoverFire ? 'intense' : 'determined',
+      environment: 'ww2_battlefield',
+      timeOfDay: 'sunset',
+      weatherOrAtmosphere: 'smoke_ash',
+      lightingMood: 'high_contrast',
+      cameraEffect: isCoverFire ? 'shake' : 'pan_right',
+      framing: 'tracking_shot',
+      soundEffect: isCoverFire ? 'gun_shot' : 'car_engine',
+      visualFilter: 'cinemascope',
+      floatingIcon: 'target',
+      prop: 'rifle',
+      objectRefs: ['military_truck_6x6', 'sandbag_bunker', 'stone_ruin_wall', 'artillery_crater'],
+      requiresOpponent: false,
+      baseIntensity: clamp(0.86 + seedVar, 0.45, 1.0),
+      baseAnticipation: clamp(0.62 + seedVar, 0.3, 0.95),
+      baseReaction: clamp(0.78 + seedVar, 0.4, 0.98),
+      baseSettle: 0.42,
+    };
+  }
 
   if (isZombieSurvival) {
     const isBunker = /bunker|subterrâneo|radar|abrigo/.test(combined);

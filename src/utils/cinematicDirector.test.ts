@@ -17,6 +17,7 @@ import {
   organicPerlin1D,
   getProsodicSpeechEnvelope,
 } from './stickmanMath';
+import { constructWorldStage } from './sceneConstructor';
 import { StickmanScene } from '../types/stickman';
 
 test('1. Plan validation and safe fallback: contextual action selection (never hardcoded by idx) and malformed JSON recovery', () => {
@@ -380,5 +381,48 @@ test('7. Minimum-Jerk C2 trajectories, 1D Perlin postural noise, Prosodic speech
     'Articulated hand resolves thumb and finger coordinates'
   );
 });
+
+test('8. 2.5D World Scene Constructor: WWII Brazilian Soldier (FEB), Volumetric 6x6 Military Truck, Travelling Camera & Physical Cover Interaction', () => {
+  const warScene = validateAndNormalizeScenePlan(
+    {
+      id: 'feb_monte_castello_test',
+      title: 'Soldado Brasileiro Correndo ao Lado do Caminhão 6x6 em Monte Castello',
+      duration: 6.5,
+      narration:
+        'O soldado da FEB corre ao lado do caminhão militar na estrada enlameada enquanto a artilharia explode e ele usa o paralama blindado como cobertura!',
+    },
+    0,
+    undefined,
+    1945
+  );
+
+  assert.equal(warScene.environment, 'ww2_battlefield', 'AI Director routes war/truck prompt to ww2_battlefield');
+
+  const beatStart = resolveActiveBeatState(warScene, 0.15);
+  const stageStart = constructWorldStage(warScene, beatStart, 0.15, 1280, 720);
+
+  const beatMid = resolveActiveBeatState(warScene, 0.42);
+  const stageMid = constructWorldStage(warScene, beatMid, 0.42, 1280, 720);
+
+  assert.equal(stageStart.isConstructedWarWorld, true, '2.5D World Stage activates for WWII scene');
+  assert.equal(stageStart.truck.active, true, 'Volumetric 6x6 military truck is active in stage');
+  assert.ok(
+    stageMid.camera.worldScrollX > stageStart.camera.worldScrollX,
+    'Travelling camera scrolls continuously forward in world space'
+  );
+  assert.ok(
+    stageMid.truck.wheelSpinRad !== stageStart.truck.wheelSpinRad,
+    '6x6 truck wheels rotate proportionally to world travel distance'
+  );
+  assert.ok(
+    stageMid.structures.length >= 3,
+    '2.5D extruded structures (stone walls, sandbag bunkers, mileposts) populate the world'
+  );
+  assert.ok(
+    stageMid.explosions.length > 0,
+    'Artillery explosion & supersonic shockwave active during bombardment window'
+  );
+});
+
 
 

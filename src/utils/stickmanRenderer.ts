@@ -22,6 +22,14 @@ import {
   SceneAnchorMap,
 } from './stickmanMath';
 import { resolveActiveBeatState } from './choreographyEngine';
+import {
+  constructWorldStage,
+  renderConstructedWorldBackground,
+  renderVolumetricMilitaryTruck,
+  renderSoldierTacticalEquipment,
+  renderConstructedWorldForeground,
+  ConstructedWorldStage,
+} from './sceneConstructor';
 
 export interface RenderOptions {
   ctx: CanvasRenderingContext2D;
@@ -47,43 +55,71 @@ export function renderStickmanFrame({
 
   const beatState = resolveActiveBeatState(scene, sceneProgress);
   const sceneAnchors = getSceneAnchors(scene.environment, width, height);
+  const worldStage = constructWorldStage(scene, beatState, sceneProgress, width, height);
 
   ctx.save();
   const activeCamera = beatState.effectiveCamera || scene.cameraEffect;
   const camera = calculateCameraTransform(activeCamera, sceneProgress);
-  const effectiveZoom = Math.max(0.85, camera.zoom + (beatState.framingZoomOffset || 0));
+  const effectiveZoom = worldStage.isConstructedWarWorld
+    ? Math.max(0.92, worldStage.camera.dynamicZoom + (beatState.framingZoomOffset || 0) * 0.5)
+    : Math.max(0.85, camera.zoom + (beatState.framingZoomOffset || 0));
   const centerX = width / 2;
   const centerY = height / 2;
 
-  ctx.translate(centerX + camera.offsetX, centerY + camera.offsetY);
+  const camOffsetX = worldStage.isConstructedWarWorld
+    ? worldStage.camera.trackingOffsetX
+    : camera.offsetX;
+  const camOffsetY = worldStage.isConstructedWarWorld
+    ? worldStage.camera.trackingOffsetY
+    : camera.offsetY;
+
+  ctx.translate(centerX + camOffsetX, centerY + camOffsetY);
+  if (worldStage.isConstructedWarWorld && Math.abs(worldStage.camera.rollAngleRad) > 0.0005) {
+    ctx.rotate(worldStage.camera.rollAngleRad);
+  }
   ctx.scale(effectiveZoom, effectiveZoom);
   ctx.translate(-centerX, -centerY);
 
-  // 1. Draw Rich Multi-Layered Background Environment
-  drawEnvironment(ctx, width, height, scene.environment, sceneProgress);
+  if (worldStage.isConstructedWarWorld) {
+    // 1. Render 2.5D Multi-Plane Parallax World Background, Perspective Road, Structures & Explosions
+    renderConstructedWorldBackground(
+      ctx,
+      width,
+      height,
+      worldStage,
+      sceneProgress,
+      beatState.elapsedInSceneSec
+    );
 
-  // 1.25 Draw Realistic Ground Texture, Horizon Depth Haze & Specular Light Reflection
-  drawRealisticGroundAndDepthLayer(
-    ctx,
-    width,
-    height,
-    scene.environment,
-    sceneAnchors,
-    sceneProgress,
-    beatState.elapsedInSceneSec
-  );
+    // 2. Render Volumetric 2.5D 6x6 FEB Military Truck (with crater-following suspension & mud spray)
+    renderVolumetricMilitaryTruck(ctx, worldStage, beatState.elapsedInSceneSec);
+  } else {
+    // 1. Draw Rich Multi-Layered Background Environment
+    drawEnvironment(ctx, width, height, scene.environment, sceneProgress);
 
-  // 1.5 Draw Living Environmental Simulation (Autonomous People, Objectives & Physics)
-  drawEnvironmentalSimulation(
-    ctx,
-    width,
-    height,
-    scene.environment,
-    beatState.elapsedInSceneSec,
-    sceneProgress,
-    beatState.char1XNorm,
-    beatState.effectiveAction1
-  );
+    // 1.25 Draw Realistic Ground Texture, Horizon Depth Haze & Specular Light Reflection
+    drawRealisticGroundAndDepthLayer(
+      ctx,
+      width,
+      height,
+      scene.environment,
+      sceneAnchors,
+      sceneProgress,
+      beatState.elapsedInSceneSec
+    );
+
+    // 1.5 Draw Living Environmental Simulation (Autonomous People, Objectives & Physics)
+    drawEnvironmentalSimulation(
+      ctx,
+      width,
+      height,
+      scene.environment,
+      beatState.elapsedInSceneSec,
+      sceneProgress,
+      beatState.char1XNorm,
+      beatState.effectiveAction1
+    );
+  }
 
   // 2. Draw Speed Lines if high-speed / action
   const isHighSpeed =
@@ -97,16 +133,17 @@ export function renderStickmanFrame({
     beatState.maneuver === 'nitro_boost' ||
     activeCamera === 'shake';
 
-  if (isHighSpeed) {
+  if (isHighSpeed && !worldStage.isConstructedWarWorld) {
     drawSpeedLines(ctx, width, height, sceneProgress);
   }
 
   // 3. Draw Characters & Vehicles with Biomechanical 2-Bone IK & Foot-Planting
-  const groundY = sceneAnchors.groundY;
+  const groundY = worldStage.isConstructedWarWorld ? worldStage.groundY : sceneAnchors.groundY;
   const isVehicleAction =
-    beatState.effectiveAction1 === 'drive_car' ||
-    beatState.effectiveAction1 === 'car_chase' ||
-    beatState.effectiveAction1 === 'car_drift';
+    !worldStage.isConstructedWarWorld &&
+    (beatState.effectiveAction1 === 'drive_car' ||
+      beatState.effectiveAction1 === 'car_chase' ||
+      beatState.effectiveAction1 === 'car_drift');
 
   const effectiveChar1: SceneCharacter = {
     ...scene.character1,
@@ -180,9 +217,19 @@ export function renderStickmanFrame({
       );
     }
   } else {
-    // Standard Character 1 with 2-bone IK foot-planting, anatomical spine, prosodic gestures, and scene anchor interaction
-    const char1X = width * beatState.char1XNorm;
-    const char1Y = groundY + beatState.jumpOffsetY;
+    // Standard Character 1 with 2-bone IK foot-planting, anatomical spine, prosodic gestures, and scene/truck anchor interaction
+    const char1X = worldStage.soldierOverride.active
+      ? worldStage.soldierOverride.screenX
+      : width * beatState.char1XNorm;
+    const char1Y = worldStage.soldierOverride.active
+      ? worldStage.soldierOverride.groundY
+      : groundY + beatState.jumpOffsetY;
+    const char1Flip = worldStage.soldierOverride.active
+      ? worldStage.soldierOverride.flipX
+      : beatState.flipChar1;
+    const char1FacingCos = worldStage.soldierOverride.active
+      ? worldStage.soldierOverride.facingCos
+      : beatState.facingCos1;
 
     drawCharacter(
       ctx,
@@ -191,7 +238,7 @@ export function renderStickmanFrame({
       char1Y,
       sceneProgress,
       isSpeaking,
-      beatState.flipChar1,
+      char1Flip,
       height,
       beatState.maneuver,
       beatState.beatProgress,
@@ -203,7 +250,8 @@ export function renderStickmanFrame({
       motionCtx1,
       sceneAnchors,
       prosodicEnvelope,
-      beatState.facingCos1
+      char1FacingCos,
+      worldStage
     );
 
     // Optional Character 2
@@ -255,7 +303,16 @@ export function renderStickmanFrame({
     }
   }
 
-  // 3.5 Draw Atmospheric Weather, Volumetric Lighting & Foreground Depth Pass from CinematicScenePlan
+  // 3.5 Foreground Depth Pass (2.5D Barbed Wire, Tracers & Dynamic Blast Lighting in War World, or Atmospheric Pass)
+  if (worldStage.isConstructedWarWorld) {
+    renderConstructedWorldForeground(
+      ctx,
+      width,
+      height,
+      worldStage,
+      beatState.elapsedInSceneSec
+    );
+  }
   drawAtmosphericRealismLayer(
     ctx,
     width,
@@ -2189,7 +2246,8 @@ function drawCharacter(
   motionContext?: MotionVariationContext,
   sceneAnchors?: SceneAnchorMap,
   prosodicEnvelope?: ProsodicSpeechEnvelope,
-  facingCos: number = 1
+  facingCos: number = 1,
+  worldStage?: ConstructedWorldStage
 ) {
   ctx.save();
   ctx.translate(x, groundY);
@@ -2222,9 +2280,19 @@ function drawCharacter(
     angles = blendLimbAngles(fromAngles, targetAngles, transitionBlend);
   }
 
-  // Optional 2-Bone IK hand target toward nearby environmental anchor (workstation, barricade, radar, vault)
+  // Optional 2-Bone IK hand target toward nearby environmental anchor or moving 2.5D military truck
   let handTargetLocal: { x: number; y: number; blend: number; hand?: 'left' | 'right' } | undefined;
-  if (sceneAnchors?.interactionAnchor) {
+  if (worldStage?.soldierOverride.active && worldStage.soldierOverride.handIKTargetWorld) {
+    const ikW = worldStage.soldierOverride.handIKTargetWorld;
+    const worldDx = ikW.x - x;
+    const worldDy = ikW.y - groundY;
+    handTargetLocal = {
+      x: (flipX ? -worldDx : worldDx) * 0.65,
+      y: Math.max(-88, Math.min(-18, worldDy)),
+      blend: ikW.blend,
+      hand: ikW.hand,
+    };
+  } else if (sceneAnchors?.interactionAnchor) {
     const worldDx = sceneAnchors.interactionAnchor.x - x;
     const worldDy = sceneAnchors.interactionAnchor.y - groundY;
     const distToAnchor = Math.hypot(worldDx, worldDy);
@@ -2701,6 +2769,16 @@ function drawCharacter(
     velocityX,
     pose.headTilt,
     prosodicEnvelope
+  );
+
+  // 10. Coherent Tactical Equipment Rig (M1 Steel Helmet, FEB Field Pack, Webbing, M1 Garand Rifle & Muzzle Flash)
+  renderSoldierTacticalEquipment(
+    ctx,
+    pose,
+    char,
+    phaseSec,
+    Boolean(worldStage?.isConstructedWarWorld),
+    Boolean(worldStage?.soldierOverride.isFiringRifle || char.action === 'trench_cover_fire')
   );
 
   ctx.restore();

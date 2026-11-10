@@ -451,6 +451,53 @@ const TRILLIONAIRE_VARIATIONS: ChoreographyVariation[] = [
   },
 ];
 
+const WW2_WAR_VARIATIONS: ChoreographyVariation[] = [
+  {
+    act: 'truck_run_alongside',
+    exp: 'determined',
+    man: 'sprint_across',
+    tx: 0.42,
+    jmp: 0,
+    prp: 'rifle',
+    lbl: '🇧🇷 Avançando ao Lado do Caminhão 6x6 FEB na Lama',
+    cam: 'pan_right',
+    ico: 'target',
+  },
+  {
+    act: 'trench_cover_fire',
+    exp: 'intense',
+    man: 'dodge_slide',
+    tx: 0.48,
+    jmp: 0,
+    prp: 'rifle',
+    lbl: '💥 Cobertura Tática no Paralama Blindado & Disparo M1',
+    cam: 'shake',
+    ico: 'fire',
+  },
+  {
+    act: 'truck_run_alongside',
+    exp: 'shocked',
+    man: 'combat_combo_rush',
+    tx: 0.56,
+    jmp: -14,
+    prp: 'rifle',
+    lbl: '⚡ Salto Sobre Cratera de Artilharia & Avanço Sob Fogo',
+    cam: 'zoom_in',
+    ico: 'exclamation',
+  },
+  {
+    act: 'truck_board_convoy',
+    exp: 'confident',
+    man: 'enter_left',
+    tx: 0.38,
+    jmp: -18,
+    prp: 'rifle',
+    lbl: '🎖️ Embarque Tático na Traseira do Caminhão em Movimento',
+    cam: 'pan_right',
+    ico: 'lightning',
+  },
+];
+
 /**
  * Breaks a scene into controlled, non-repeating choreography beats.
  * Guarantees that every single beat in a scene has a distinct action, distinct maneuver,
@@ -489,6 +536,12 @@ export function generateChoreographyForScene(scene: StickmanScene): Choreography
   const beatDur = dur / totalChunks;
 
   const baseAction = scene.character1.action;
+  const isWarBattlefield =
+    scene.environment === 'ww2_battlefield' ||
+    baseAction === 'truck_run_alongside' ||
+    baseAction === 'trench_cover_fire' ||
+    baseAction === 'truck_board_convoy';
+
   const isVehicle =
     baseAction === 'drive_car' ||
     baseAction === 'car_chase' ||
@@ -544,7 +597,50 @@ export function generateChoreographyForScene(scene: StickmanScene): Choreography
 
     let candidate: ChoreographyVariation;
 
-    if (isVehicle) {
+    if (isWarBattlefield) {
+      let poolIdx = (idx + sceneHash) % WW2_WAR_VARIATIONS.length;
+      if (idx === 0) {
+        poolIdx =
+          baseAction === 'trench_cover_fire'
+            ? 1
+            : baseAction === 'truck_board_convoy'
+            ? 3
+            : 0;
+      } else if (
+        lower.includes('cobertura') ||
+        lower.includes('explos') ||
+        lower.includes('artilharia') ||
+        lower.includes('paralama') ||
+        lower.includes('fogo')
+      ) {
+        poolIdx = 1;
+      } else if (
+        lower.includes('cratera') ||
+        lower.includes('salta') ||
+        lower.includes('rompendo')
+      ) {
+        poolIdx = 2;
+      } else if (
+        lower.includes('traseira') ||
+        lower.includes('embarc') ||
+        lower.includes('subi') ||
+        lower.includes('prancha')
+      ) {
+        poolIdx = 3;
+      } else if (baseAction === 'truck_run_alongside') {
+        poolIdx = idx % 2 === 0 ? 0 : 2;
+      }
+      candidate = { ...WW2_WAR_VARIATIONS[poolIdx] };
+      let guard = 0;
+      while (
+        (candidate.man === prevManeuver || candidate.lbl === prevLabel) &&
+        guard < WW2_WAR_VARIATIONS.length
+      ) {
+        poolIdx = (poolIdx + 1) % WW2_WAR_VARIATIONS.length;
+        candidate = { ...WW2_WAR_VARIATIONS[poolIdx] };
+        guard++;
+      }
+    } else if (isVehicle) {
       let poolIdx = (idx + sceneHash) % VEHICLE_VARIATIONS.length;
       if (lower.includes('drift') || lower.includes('curva') || lower.includes('freio')) {
         poolIdx = 1;

@@ -10,9 +10,9 @@ import { ExportVideoModal } from './components/ExportVideoModal';
 import { CreativeToolsDrawer } from './components/CreativeToolsDrawer';
 
 export default function App() {
-  const [currentPresetKey, setCurrentPresetKey] = useState<string>('zombie_apocalypse_sim');
+  const [currentPresetKey, setCurrentPresetKey] = useState<string>('ww2_brazilian_soldier_feb');
   const [project, setProject] = useState<StickmanProject>(
-    PRESET_PROJECTS.zombie_apocalypse_sim
+    PRESET_PROJECTS.ww2_brazilian_soldier_feb
   );
   const [activeSceneIndex, setActiveSceneIndex] = useState(0);
 

@@ -24,7 +24,10 @@ export type StickmanAction =
   | 'zombie_survive_barricade'
   | 'trillion_buy_everything'
   | 'scavenge_supplies'
-  | 'command_crowd';
+  | 'command_crowd'
+  | 'truck_run_alongside'
+  | 'trench_cover_fire'
+  | 'truck_board_convoy';
 
 export type StickmanExpression =
   | 'talking'
@@ -38,6 +41,7 @@ export type StickmanExpression =
   | 'determined';
 
 export type EnvironmentTheme =
+  | 'ww2_battlefield'
   | 'zombie_apocalypse'
   | 'trillionaire_sandbox'
   | 'bunker_survival'
@@ -144,7 +148,9 @@ export interface SceneCharacter {
     | 'steering_wheel'
     | 'sunglasses'
     | 'briefcase'
-    | 'book';
+    | 'book'
+    | 'rifle';
+  equipment?: ('helmet_m1' | 'tactical_pack' | 'webbing_belt')[];
   position: 'left' | 'center' | 'right';
   scale?: number;
 }

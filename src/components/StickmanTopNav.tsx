@@ -53,8 +53,9 @@ export const StickmanTopNav: React.FC<StickmanTopNavProps> = ({
         <select
           value={currentPresetKey}
           onChange={(e) => onSelectPreset(e.target.value)}
-          className="bg-slate-900 border border-slate-700 hover:border-slate-600 rounded-xl px-3 py-1.5 text-xs text-slate-200 font-medium focus:outline-none focus:border-blue-500 transition cursor-pointer max-w-[310px] truncate"
+          className="bg-slate-900 border border-slate-700 hover:border-slate-600 rounded-xl px-3 py-1.5 text-xs text-slate-200 font-medium focus:outline-none focus:border-blue-500 transition cursor-pointer max-w-[330px] truncate"
         >
+          <option value="ww2_brazilian_soldier_feb">🇧🇷 Soldado Brasileiro na 2ª Guerra: Monte Castello (FEB 2.5D)</option>
           <option value="zombie_apocalypse_sim">🧟 Como Seria um Apocalipse Zumbi? (Física & Horda)</option>
           <option value="spend_one_trillion_month">💎 E Se Tivesse 1 Trilhão p/ Gastar em 1 Mês?</option>
           <option value="epic_12min_documentary">👑 Documentário Épico (12 Minutos / 14 Cenas)</option>
