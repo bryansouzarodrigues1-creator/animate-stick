@@ -71,7 +71,7 @@ app.post('/api/ai/scene-world-plan', async (req: Request, res: Response) => {
 Duration: ${duration} seconds. Output ONLY valid JSON, no markdown.
 This schema is provider-neutral and must not use renderer-specific code, scripts, shaders, URLs, or arbitrary component names.
 Coordinate system: meters, Y-up. Include a coherent environment, all visible set pieces, characters, props, explicit physical interactions, and cinematic shots.
-Do not assume a military scene. Build the requested location from semantic assets; use assetKey strings such as kitchen.counter, street.road, school.desk, sports.hoop, nature.tree, vehicle.car.
+Do not assume a military scene. Build the requested location from semantic assets; use assetKey strings such as kitchen.counter, street.road, school.desk, sports.hoop, nature.tree, vehicle.car. Starter vocabulary: ${UNIVERSAL_ASSET_STARTER_PACK.join(", ")}.
 Every entity needs unique id, kind, assetKey, label, transform {position{x,y,z},rotation{x,y,z},scale{x,y,z}}.
 Kinds: character, prop, architecture, nature, vehicle, terrain, light, vfx, decoration.
 Interactions use actorId, targetId, verb, start, end, contactPoint, intent. Verbs: walk_to, look_at, reach, grab, release, carry, push, pull, open, close, sit, stand, climb, jump_to, throw, hand_over, use, custom.
