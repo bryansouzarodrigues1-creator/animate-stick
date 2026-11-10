@@ -100,6 +100,8 @@ const INTERACTION_VERBS: readonly InteractionVerb[] = [
   'walk_to', 'look_at', 'reach', 'grab', 'release', 'carry', 'push', 'pull',
   'open', 'close', 'sit', 'stand', 'climb', 'jump_to', 'throw', 'hand_over', 'use', 'custom',
 ];
+const MATERIALS = ['wood', 'metal', 'glass', 'stone', 'fabric', 'plastic', 'organic', 'concrete'] as const;
+const CAMERA_MOVEMENTS = ['static', 'pan', 'tilt', 'dolly', 'orbit', 'handheld'] as const;
 const SHOT_TYPES: readonly WorldShot['type'][] = [
   'establishing', 'wide', 'medium', 'close_up', 'over_shoulder',
   'tracking', 'low_angle', 'high_angle',
@@ -158,7 +160,7 @@ export function validateUniversalWorldPlan(input: unknown): WorldPlanValidation 
       },
       ...(appearance ? { appearance: {
         ...(isText(appearance.color) ? { color: appearance.color.slice(0, 32) } : {}),
-        ...(isText(appearance.material) ? { material: appearance.material } : {}),
+        ...(MATERIALS.includes(appearance.material) ? { material: appearance.material } : {}),
         ...(finite(appearance.roughness) ? { roughness: clamp(appearance.roughness, 0, 1) } : {}),
         ...(finite(appearance.metalness) ? { metalness: clamp(appearance.metalness, 0, 1) } : {}),
       } } : {}),
@@ -205,7 +207,7 @@ export function validateUniversalWorldPlan(input: unknown): WorldPlanValidation 
       : [];
     shots.push({
       start, end, type: raw.type, subjectIds,
-      ...(isText(raw.movement) ? { movement: raw.movement } : {}),
+      ...(CAMERA_MOVEMENTS.includes(raw.movement) ? { movement: raw.movement } : {}),
       ...(isText(raw.lookAtId) && entityIds.has(slug(raw.lookAtId, '')) ? { lookAtId: slug(raw.lookAtId, '') } : {}),
     });
   }
