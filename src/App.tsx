@@ -216,6 +216,7 @@ export default function App() {
             activeSceneIndex={activeSceneIndex}
             onSelectScene={setActiveSceneIndex}
             onUpdateAspectRatio={handleUpdateAspectRatio}
+            onOpenExportModal={() => setIsExportModalOpen(true)}
             externalCanvasRef={canvasRef}
           />
         </div>
@@ -263,6 +264,7 @@ export default function App() {
       <ExportVideoModal
         isOpen={isExportModalOpen}
         project={project}
+        activeSceneIndex={activeSceneIndex}
         canvasRef={canvasRef}
         onClose={() => setIsExportModalOpen(false)}
       />

@@ -88,10 +88,10 @@ export const StickmanTopNav: React.FC<StickmanTopNavProps> = ({
 
         <button
           onClick={onOpenExportModal}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white text-xs font-bold transition shadow-lg shadow-blue-600/25 active:scale-95"
+          className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white text-xs font-bold transition shadow-lg shadow-emerald-600/25 active:scale-95"
         >
           <Download className="w-3.5 h-3.5" />
-          <span>Exportar Vídeo</span>
+          <span>Baixar MP4</span>
         </button>
       </div>
     </header>

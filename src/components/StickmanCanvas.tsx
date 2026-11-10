@@ -6,15 +6,22 @@ import {
   Volume2,
   VolumeX,
   Maximize2,
+  Minimize2,
+  Download,
   Tv,
   Smartphone,
   Sparkles,
   Sliders,
   CheckCircle,
   Mic,
+  Camera,
+  Box,
+  Subtitles,
 } from 'lucide-react';
 import { StickmanProject, StickmanScene } from '../types/stickman';
 import { renderStickmanFrame } from '../utils/stickmanRenderer';
+import { threeStageEngine } from '../utils/threeStageEngine';
+import { CinematicShotType, evaluateWorldStageFrame3D } from '../utils/cinematicShotDirector';
 import {
   calculateTotalDuration,
   getSceneAtTimestamp,
@@ -27,6 +34,7 @@ interface StickmanCanvasProps {
   activeSceneIndex: number;
   onSelectScene: (idx: number) => void;
   onUpdateAspectRatio: (ratio: '16:9' | '9:16') => void;
+  onOpenExportModal?: () => void;
   externalCanvasRef?: React.RefObject<HTMLCanvasElement | null>;
 }
 
@@ -35,9 +43,11 @@ export const StickmanCanvas: React.FC<StickmanCanvasProps> = ({
   activeSceneIndex,
   onSelectScene,
   onUpdateAspectRatio,
+  onOpenExportModal,
   externalCanvasRef,
 }) => {
   const localCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const playerContainerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = externalCanvasRef || localCanvasRef;
 
   const [isPlaying, setIsPlaying] = useState(false);
@@ -49,6 +59,10 @@ export const StickmanCanvas: React.FC<StickmanCanvasProps> = ({
   const [isVoiceEnabled, setIsVoiceEnabled] = useState(false);
   const [syncOffsetMs, setSyncOffsetMs] = useState(project.audioLatencyOffsetMs || 0);
   const [showSyncSettings, setShowSyncSettings] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [renderEngineMode, setRenderEngineMode] = useState<'3d_webgl' | '2d_canvas'>('3d_webgl');
+  const [cameraOverride, setCameraOverride] = useState<CinematicShotType | 'auto'>('auto');
+  const [showSubtitles, setShowSubtitles] = useState(true);
 
   const totalDuration = calculateTotalDuration(project.scenes);
   const animFrameIdRef = useRef<number | null>(null);
@@ -313,25 +327,41 @@ export const StickmanCanvas: React.FC<StickmanCanvasProps> = ({
       }
 
       // Draw current frame using currentTimeRef.current
-      const { scene, sceneProgress } = getSceneAtTimestamp(
+      const { scene, sceneProgress, index } = getSceneAtTimestamp(
         project.scenes,
         currentTimeRef.current
       );
 
       if (scene) {
-        renderStickmanFrame({
-          ctx,
-          width: canvas.width,
-          height: canvas.height,
-          scene,
-          sceneProgress,
-          isSpeaking,
-          aspectRatio: project.aspectRatio,
-          wpm: project.wordsPerMinute || 155,
-        });
+        if (renderEngineMode === '3d_webgl') {
+          threeStageEngine.renderFrameTo2DCanvas({
+            ctx,
+            width: canvas.width,
+            height: canvas.height,
+            scene,
+            sceneProgress,
+            sceneIndex: index,
+            cameraOverride,
+            showSubtitles,
+            wpm: project.wordsPerMinute || 155,
+          });
+        } else {
+          renderStickmanFrame({
+            ctx,
+            width: canvas.width,
+            height: canvas.height,
+            scene,
+            sceneProgress,
+            isSpeaking,
+            aspectRatio: project.aspectRatio,
+            wpm: project.wordsPerMinute || 155,
+          });
+        }
       }
 
-      localFrameId = requestAnimationFrame(render);
+      if (isPlaying) {
+        localFrameId = requestAnimationFrame(render);
+      }
     };
 
     localFrameId = requestAnimationFrame(render);
@@ -342,6 +372,7 @@ export const StickmanCanvas: React.FC<StickmanCanvasProps> = ({
     };
   }, [
     isPlaying,
+    currentTime,
     totalDuration,
     project.scenes,
     project.aspectRatio,
@@ -350,18 +381,42 @@ export const StickmanCanvas: React.FC<StickmanCanvasProps> = ({
     volume,
     isMuted,
     syncOffsetMs,
+    renderEngineMode,
+    cameraOverride,
+    showSubtitles,
     onSelectScene,
     triggerSceneNarration,
     stopAllAudio,
     canvasRef,
   ]);
 
+  // Sync ESC key and browser native fullscreen with in-app cinema fullscreen state
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isFullscreen) {
+        setIsFullscreen(false);
+      }
+    };
+    const handleFsChange = () => {
+      if (document.fullscreenElement) {
+        setIsFullscreen(true);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('fullscreenchange', handleFsChange);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('fullscreenchange', handleFsChange);
+    };
+  }, [isFullscreen]);
+
   const toggleFullscreen = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    if (!document.fullscreenElement) {
-      canvas.requestFullscreen?.().catch(() => {});
-    } else {
+    const nextState = !isFullscreen;
+    setIsFullscreen(nextState);
+    const container = playerContainerRef.current;
+    if (nextState) {
+      container?.requestFullscreen?.().catch(() => {});
+    } else if (document.fullscreenElement) {
       document.exitFullscreen?.().catch(() => {});
     }
   };
@@ -375,6 +430,17 @@ export const StickmanCanvas: React.FC<StickmanCanvasProps> = ({
     ? resolveActiveBeatState(activeScene, sceneProgress)
     : null;
 
+  const active3DFrame =
+    activeScene && renderEngineMode === '3d_webgl'
+      ? evaluateWorldStageFrame3D(
+          activeScene,
+          sceneProgress,
+          activeIdx,
+          cameraOverride,
+          project.wordsPerMinute || 155
+        )
+      : null;
+
   const formatSeconds = (sec: number) => {
     const m = Math.floor(sec / 60);
     const s = Math.floor(sec % 60);
@@ -385,25 +451,92 @@ export const StickmanCanvas: React.FC<StickmanCanvasProps> = ({
   const is916 = project.aspectRatio === '9:16';
 
   return (
-    <div className="flex flex-col h-full bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl">
+    <div
+      ref={playerContainerRef}
+      className={
+        isFullscreen
+          ? 'fixed inset-0 z-50 flex flex-col w-screen h-screen bg-slate-950 overflow-hidden shadow-2xl'
+          : 'flex flex-col h-full bg-slate-950 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl'
+      }
+    >
       {/* Top Video Header */}
-      <div className="flex items-center justify-between px-4 py-2.5 bg-slate-900 border-b border-slate-800 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 bg-slate-900 border-b border-slate-800 text-xs">
         <div className="flex items-center gap-2">
-          <span className="flex h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-          <span className="font-semibold text-slate-200">
+          <span className="flex h-2 w-2 rounded-full bg-emerald-500" />
+          <span className="font-semibold text-slate-200 truncate max-w-[160px] sm:max-w-[220px]">
             {project.title || 'Vídeo Stickman'}
           </span>
           <span className="text-slate-500">•</span>
-          <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-medium">
+          <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-medium truncate max-w-[140px]">
             {activeScene?.title || `Cena ${activeIdx + 1}`}
           </span>
         </div>
 
-        {/* Aspect Ratio & Audio Calibrator */}
-        <div className="flex items-center gap-2">
+        {/* Engine Switcher, Aspect Ratio, Fullscreen & Download MP4 */}
+        <div className="flex flex-wrap items-center gap-2">
+          {/* 3D WebGL vs 2.5D Canvas Engine Switch */}
+          <div className="flex items-center bg-slate-950 p-0.5 rounded-lg border border-slate-800">
+            <button
+              onClick={() => setRenderEngineMode('3d_webgl')}
+              className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-bold transition ${
+                renderEngineMode === '3d_webgl'
+                  ? 'bg-cyan-600 text-white shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="Motor 3D Cinematográfico (Three.js WebGL com Multi-Câmera e Física de Impacto)"
+            >
+              <Box className="w-3.5 h-3.5" />
+              <span>Motor 3D WebGL</span>
+            </button>
+            <button
+              onClick={() => setRenderEngineMode('2d_canvas')}
+              className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition ${
+                renderEngineMode === '2d_canvas'
+                  ? 'bg-blue-600 text-white shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+              title="Motor 2.5D Canvas Clássico"
+            >
+              <span>2.5D</span>
+            </button>
+          </div>
+
+          {onOpenExportModal && (
+            <button
+              onClick={onOpenExportModal}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 text-white text-xs font-bold shadow-md shadow-emerald-600/20 transition active:scale-95"
+              title="Renderizar e baixar vídeo em MP4"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Baixar MP4</span>
+            </button>
+          )}
+
+          <button
+            onClick={toggleFullscreen}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border transition ${
+              isFullscreen
+                ? 'bg-amber-500/20 border-amber-500/60 text-amber-300'
+                : 'bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-100'
+            }`}
+            title={isFullscreen ? 'Sair da Tela Cheia (ESC)' : 'Expandir para Tela Cheia'}
+          >
+            {isFullscreen ? (
+              <>
+                <Minimize2 className="w-3.5 h-3.5 text-amber-400" />
+                <span>Sair Tela Cheia</span>
+              </>
+            ) : (
+              <>
+                <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Tela Cheia</span>
+              </>
+            )}
+          </button>
+
           <button
             onClick={() => setShowSyncSettings(!showSyncSettings)}
-            className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium border transition ${
+            className={`hidden xl:flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium border transition ${
               showSyncSettings
                 ? 'bg-blue-950/80 border-blue-500 text-blue-300'
                 : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
@@ -411,13 +544,13 @@ export const StickmanCanvas: React.FC<StickmanCanvasProps> = ({
             title="Ajuste fino de sincronização de áudio / vídeo"
           >
             <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-            <span>Sincronia Áudio</span>
+            <span>Sincronia</span>
           </button>
 
           <div className="flex items-center gap-1 bg-slate-950 p-0.5 rounded-lg border border-slate-800">
             <button
               onClick={() => onUpdateAspectRatio('16:9')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition ${
+              className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition ${
                 !is916
                   ? 'bg-blue-600 text-white shadow'
                   : 'text-slate-400 hover:text-slate-200'
@@ -429,7 +562,7 @@ export const StickmanCanvas: React.FC<StickmanCanvasProps> = ({
             </button>
             <button
               onClick={() => onUpdateAspectRatio('9:16')}
-              className={`flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium transition ${
+              className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition ${
                 is916
                   ? 'bg-blue-600 text-white shadow'
                   : 'text-slate-400 hover:text-slate-200'
@@ -437,7 +570,7 @@ export const StickmanCanvas: React.FC<StickmanCanvasProps> = ({
               title="Formato Shorts / TikTok 9:16 (Vertical)"
             >
               <Smartphone className="w-3.5 h-3.5" />
-              9:16 Shorts
+              9:16
             </button>
           </div>
         </div>
@@ -445,7 +578,7 @@ export const StickmanCanvas: React.FC<StickmanCanvasProps> = ({
 
       {/* Sync Calibrator Bar (if opened) */}
       {showSyncSettings && (
-        <div className="flex items-center justify-between px-4 py-2 bg-slate-900/90 border-b border-blue-500/30 text-xs animate-in slide-in-from-top duration-150">
+        <div className="flex items-center justify-between px-4 py-2 bg-slate-900 border-b border-blue-500/30 text-xs">
           <div className="flex items-center gap-2">
             <CheckCircle className="w-4 h-4 text-emerald-400" />
             <span className="text-slate-300">Calibrador de Sincronia:</span>
@@ -487,40 +620,76 @@ export const StickmanCanvas: React.FC<StickmanCanvasProps> = ({
           }`}
         />
 
-        {/* Floating Speaking Pill */}
+        {/* Floating Speaking Indicator (solid surface, no backdrop-blur or pulse) */}
         {isSpeaking && (
-          <div className="absolute top-6 left-6 flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900/90 border border-emerald-500/50 backdrop-blur text-emerald-400 text-xs font-semibold shadow-lg">
-            <span className="flex h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
+          <div className="absolute top-6 left-6 flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900 border border-emerald-500/50 text-emerald-400 text-xs font-semibold shadow-lg">
+            <span className="flex h-2 w-2 rounded-full bg-emerald-400" />
             Locução em tempo real...
           </div>
         )}
 
         {/* Active Scene Overlay Badge */}
         {activeScene && (
-          <div className="absolute top-6 right-6 flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900/80 border border-slate-700/60 backdrop-blur text-slate-300 text-xs shadow-lg">
+          <div className="absolute top-6 right-6 flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900 border border-slate-700 text-slate-300 text-xs shadow-lg">
             {activeScene.chapter && (
               <span className="text-amber-400 font-bold mr-1 border-r border-slate-700 pr-2">
                 {activeScene.chapter}
               </span>
             )}
             <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            <span>{activeScene.environment.replace(/_/g, ' ').toUpperCase()}</span>
+            <span>
+              {active3DFrame
+                ? active3DFrame.shot.shotLabel
+                : activeScene.environment.replace(/_/g, ' ').toUpperCase()}
+            </span>
           </div>
         )}
       </div>
 
-      {/* Live Second-by-Second Choreography Indicator */}
-      <div className="flex items-center justify-between px-4 py-1.5 bg-slate-950 border-t border-slate-800 text-[11px] text-slate-400">
-        <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-          <span className="text-slate-300 font-semibold">Coreografia ao Vivo:</span>
+      {/* Live 3D Camera Shot Director & Choreography Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-1.5 bg-slate-950 border-t border-slate-800 text-[11px] text-slate-400">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-cyan-400" />
+          <span className="text-slate-300 font-semibold">Direção 3D:</span>
           <span className="px-2 py-0.5 rounded bg-blue-950/80 border border-blue-500/40 text-cyan-300 font-medium">
-            {activeBeatState?.beat.label || 'Ação Fluida'}
+            {active3DFrame
+              ? `${active3DFrame.shot.shotLabel} • Fase: ${active3DFrame.heroRig.boardingPhase}`
+              : activeBeatState?.beat.label || 'Ação Fluida'}
           </span>
-          {activeBeatState && (
-            <span className="text-slate-500 text-[10px]">
-              (Beat {activeBeatState.beatIndex + 1}/{activeBeatState.totalBeats} • {activeBeatState.maneuver !== 'none' ? `Manobra: ${activeBeatState.maneuver}` : 'Ação Dinâmica'})
-            </span>
+
+          {renderEngineMode === '3d_webgl' && (
+            <div className="flex items-center gap-1.5 ml-1">
+              <Camera className="w-3.5 h-3.5 text-amber-400" />
+              <select
+                aria-label="Plano de Câmera 3D"
+                value={cameraOverride}
+                onChange={(e) =>
+                  setCameraOverride(e.target.value as CinematicShotType | 'auto')
+                }
+                className="bg-slate-900 border border-slate-700 rounded px-2 py-0.5 text-[11px] text-slate-200 font-medium focus:outline-none focus:border-cyan-500 cursor-pointer"
+              >
+                <option value="auto">🎥 Cortes Automáticos IA (Multi-Câmera)</option>
+                <option value="low_angle_tracking">📐 35mm Tracking Baixo (Roda & Botas)</option>
+                <option value="close_up_emotion">🎭 85mm Close-Up Rosto & Atuação</option>
+                <option value="over_the_shoulder">🎯 50mm Over-The-Shoulder Tático</option>
+                <option value="dutch_impact_blast">💥 24mm Impacto & Explosão (Dutch)</option>
+                <option value="tailgate_action_mount">🚛 40mm Embarque na Traseira do Caminhão</option>
+                <option value="crane_establishing">🏔️ 28mm Grua Panorâmica 3D</option>
+              </select>
+
+              <button
+                onClick={() => setShowSubtitles(!showSubtitles)}
+                className={`flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] font-medium transition ${
+                  showSubtitles
+                    ? 'bg-slate-800 border-slate-700 text-slate-200'
+                    : 'bg-slate-950 border-slate-800 text-slate-500'
+                }`}
+                title="Mostrar ou ocultar legendas para avaliar a narrativa visual pura"
+              >
+                <Subtitles className="w-3 h-3 text-cyan-400" />
+                <span>{showSubtitles ? 'Legendas: ON' : 'Sem Legendas'}</span>
+              </button>
+            </div>
           )}
         </div>
         <div className="flex items-center gap-3">
@@ -536,10 +705,6 @@ export const StickmanCanvas: React.FC<StickmanCanvasProps> = ({
             <Mic className="w-3 h-3 text-cyan-400" />
             <span>Ouvir Cena</span>
           </button>
-          <span className="text-slate-600">|</span>
-          <span className="text-[10px] text-slate-500">
-            {isVoiceEnabled ? '🔊 Locução Ativada' : '⚡ 60 FPS Fluido (Áudio sob Demanda)'}
-          </span>
         </div>
       </div>
 
@@ -634,8 +799,8 @@ export const StickmanCanvas: React.FC<StickmanCanvasProps> = ({
           </button>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
+          <div className="hidden sm:flex items-center gap-2">
             <button
               onClick={() => setIsMuted(!isMuted)}
               className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition"
@@ -657,16 +822,37 @@ export const StickmanCanvas: React.FC<StickmanCanvasProps> = ({
                 setVolume(parseFloat(e.target.value));
                 if (isMuted) setIsMuted(false);
               }}
-              className="w-20 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
+              className="w-16 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-blue-500"
             />
           </div>
 
+          {onOpenExportModal && (
+            <button
+              onClick={onOpenExportModal}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold transition shadow-md shadow-emerald-600/20"
+              title="Baixar vídeo em MP4"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Baixar MP4</span>
+            </button>
+          )}
+
           <button
             onClick={toggleFullscreen}
-            className="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition"
-            title="Tela Cheia"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold transition"
+            title={isFullscreen ? 'Sair da Tela Cheia (ESC)' : 'Tela Cheia'}
           >
-            <Maximize2 className="w-4 h-4" />
+            {isFullscreen ? (
+              <>
+                <Minimize2 className="w-3.5 h-3.5 text-amber-400" />
+                <span>Sair Tela Cheia</span>
+              </>
+            ) : (
+              <>
+                <Maximize2 className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Tela Cheia</span>
+              </>
+            )}
           </button>
         </div>
       </div>
