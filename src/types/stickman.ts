@@ -149,10 +149,144 @@ export interface SceneCharacter {
   scale?: number;
 }
 
+export type DramaticIntent =
+  | 'introduce_conflict'
+  | 'escalate_tension'
+  | 'revelation'
+  | 'climax_confrontation'
+  | 'tactical_planning'
+  | 'escape_pursuit'
+  | 'triumph_celebration'
+  | 'despair_setback'
+  | 'world_building'
+  | 'resolution';
+
+export type EmotionalArcState =
+  | 'calm'
+  | 'curious'
+  | 'tense'
+  | 'urgent'
+  | 'furious'
+  | 'shocked'
+  | 'triumphant'
+  | 'desperate'
+  | 'determined'
+  | 'reflective';
+
+export type NarrativeBeatPhase =
+  | 'opening_anticipation'
+  | 'development_action'
+  | 'climax_reaction'
+  | 'settle_recovery';
+
+export interface CinematicEnvironmentPlan {
+  theme: EnvironmentTheme;
+  timeOfDay: 'dawn' | 'day' | 'sunset' | 'night' | 'underground' | 'atemporal';
+  weatherOrAtmosphere:
+    | 'clear'
+    | 'rain'
+    | 'fog'
+    | 'smoke_ash'
+    | 'neon_haze'
+    | 'spotlight'
+    | 'toxic_mist';
+  lightingMood:
+    | 'warm_golden'
+    | 'cold_noir'
+    | 'high_contrast'
+    | 'emergency_strobe'
+    | 'bioluminescent'
+    | 'neutral';
+  continuityFromPrevScene:
+    | 'same_location'
+    | 'continuous_motion'
+    | 'time_cut'
+    | 'new_location';
+  scenicObjects: string[];
+  rendererSupport: {
+    themeSupported: boolean;
+    atmosphereMetadataOnly: boolean;
+    lightingMetadataOnly: boolean;
+    objectsMetadataOnly: boolean;
+  };
+}
+
+export interface CinematicCameraPlan {
+  framing: 'wide_establishing' | 'medium_action' | 'close_dramatic' | 'tracking_shot';
+  cameraEffect: CameraEffect;
+  intensity: number; // [0..1]
+  focusTarget: 'character1' | 'character2' | 'both' | 'environment';
+  rendererSupport: {
+    cameraEffectSupported: boolean;
+    framingSimulatedViaZoom: boolean;
+  };
+}
+
+export interface CinematicCharacterRef {
+  characterId: string;
+  name: string;
+  role: 'protagonist' | 'antagonist' | 'ally' | 'crowd_leader';
+  color: string;
+  scale: number;
+  defaultProp?: SceneCharacter['prop'];
+  entryNormalizedX: number; // [0.15 .. 0.85]
+  exitNormalizedX: number;  // [0.15 .. 0.85]
+  facingDirection: 'left' | 'right';
+  emotionalState: EmotionalArcState;
+}
+
+export interface CinematicBeatPlan {
+  beatId: string;
+  relStart: number; // [0..1] relative start within scene
+  relEnd: number;   // [0..1] relative end within scene
+  narrativePhase: NarrativeBeatPhase;
+  dramaticIntent: string;
+  spokenSegment: string;
+  action: StickmanAction;
+  secondaryAction?: StickmanAction;
+  expression: StickmanExpression;
+  maneuver: DynamicManeuver;
+  prop?: SceneCharacter['prop'];
+  cameraEffect?: CameraEffect;
+  floatingIcon?: FloatingVfxIcon;
+  intensity: number;    // [0.15 .. 1.0]
+  anticipation: number; // [0.0 .. 1.0]
+  reaction: number;     // [0.0 .. 1.0]
+  settle: number;       // [0.0 .. 1.0]
+  weightShift: number;  // [-1.0 .. 1.0]
+  fromX: number;        // [0.15 .. 0.85]
+  toX: number;          // [0.15 .. 0.85]
+  char2FromX?: number;
+  char2ToX?: number;
+  jumpArc: number;      // px (negative = jump up)
+  finalPoseHold?: boolean;
+  contactConstraints?: ('ground_feet' | 'vehicle_seat' | 'prop_hand' | 'barricade_brace')[];
+  seed: number;
+}
+
+export interface CinematicScenePlan {
+  planVersion: '1.0';
+  sceneSeed: number;
+  dramaticIntent: DramaticIntent;
+  emotionalState: EmotionalArcState;
+  narrativeSummary: string;
+  environmentPlan: CinematicEnvironmentPlan;
+  cameraPlan: CinematicCameraPlan;
+  characters: CinematicCharacterRef[];
+  objectRefs: string[];
+  beats: CinematicBeatPlan[];
+  transitionToNext: 'cut' | 'match_action' | 'pan_continuous' | 'fade_dramatic';
+  limitations: string[];
+}
+
 export interface ChoreographyBeat {
   id: string;
   startTime: number; // in seconds within the scene (e.g., 0, 1.2, 2.5...)
   endTime: number;   // in seconds within the scene
+  relStart?: number; // [0..1] relative start time
+  relEnd?: number;   // [0..1] relative end time
+  narrativePhase?: NarrativeBeatPhase;
+  dramaticIntent?: string;
   label: string;     // human-readable description of what happens in this second
   spokenText?: string;
   action: StickmanAction;
@@ -168,6 +302,12 @@ export interface ChoreographyBeat {
   maneuver: DynamicManeuver;
   cameraEffect?: CameraEffect;
   floatingIcon?: FloatingVfxIcon;
+  intensity?: number;    // [0.15 .. 1.0]
+  anticipation?: number; // [0.0 .. 1.0]
+  reaction?: number;     // [0.0 .. 1.0]
+  settle?: number;       // [0.0 .. 1.0]
+  weightShift?: number;  // [-1.0 .. 1.0]
+  seed?: number;
   timeRange?: string; // formatted e.g. "0.0s - 1.5s"
   words?: string;     // spoken snippet
 }
@@ -186,6 +326,8 @@ export interface StickmanScene {
   visualFilter?: VisualFilter;
   floatingIcon?: FloatingVfxIcon;
   choreography?: ChoreographyBeat[]; // Second-by-second distinct actions & movements
+  scenePlan?: CinematicScenePlan; // AI Director semantic & temporal plan
+  seed?: number; // Deterministic variation seed
   customAudioUrl?: string; // from uploaded ElevenLabs mp3
   customAudioFileName?: string;
   customAudioDuration?: number;

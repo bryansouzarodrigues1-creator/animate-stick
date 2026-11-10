@@ -249,11 +249,22 @@ export function blendLimbAngles(a: LimbAngles, b: LimbAngles, t: number): LimbAn
   };
 }
 
+export interface MotionVariationContext {
+  seed?: number;
+  intensity?: number;     // [0.15 .. 1.0], default 0.7
+  anticipation?: number;  // [0.0 .. 1.0], default 0.4
+  reaction?: number;      // [0.0 .. 1.0], default 0.5
+  settle?: number;        // [0.0 .. 1.0], default 0.5
+  weightShift?: number;   // [-1.0 .. 1.0], default 0
+}
+
 /**
  * Calculates loose, organic, multi-harmonic limb angles and independent joint physics
  * for procedural stickman animation.
  * Uses irrational frequency ratios (phi = 1.618, sqrt2 = 1.414, sqrt3 = 1.732)
- * so left and right limbs move independently and never lock into robotic loops.
+ * and optional deterministic `motionContext` (seed, intensity, anticipation, reaction, settle, weightShift)
+ * so two scenes with the same action but different seeds/contexts produce distinct human-like modulation
+ * while remaining 100% deterministic for any (timestamp, seed) pair.
  */
 export function calculateLimbAngles(
   action: StickmanAction,
@@ -262,28 +273,75 @@ export function calculateLimbAngles(
   elapsedSec?: number,
   beatProgress: number = 0.5,
   maneuver: DynamicManeuver = 'none',
-  beatIndex: number = 0
+  beatIndex: number = 0,
+  motionContext?: MotionVariationContext
 ): LimbAngles {
-  // Controlled, weighted real-time phase (~2.7 rad/sec instead of 7.5 rad/sec) so movements feel grounded and deliberate
+  const ctxIntensity =
+    motionContext?.intensity !== undefined
+      ? Math.max(0.15, Math.min(1.0, motionContext.intensity))
+      : 0.7;
+  const ctxAnticipation =
+    motionContext?.anticipation !== undefined
+      ? Math.max(0.0, Math.min(1.0, motionContext.anticipation))
+      : 0.4;
+  const ctxReaction =
+    motionContext?.reaction !== undefined
+      ? Math.max(0.0, Math.min(1.0, motionContext.reaction))
+      : 0.5;
+  const ctxSettle =
+    motionContext?.settle !== undefined
+      ? Math.max(0.0, Math.min(1.0, motionContext.settle))
+      : 0.5;
+  const ctxWeightShift =
+    motionContext?.weightShift !== undefined
+      ? Math.max(-1.0, Math.min(1.0, motionContext.weightShift))
+      : 0;
+
+  // Deterministic phase & tempo offset from seed (0 when no seed provided for backward compatibility)
+  const rawSeed = motionContext?.seed ? Math.abs(Math.trunc(motionContext.seed)) : 0;
+  const seedPhaseOffset = rawSeed > 0 ? ((rawSeed % 997) / 997) * Math.PI * 2 : 0;
+  const seedAsymmetry = rawSeed > 0 ? (((rawSeed % 389) / 389) - 0.5) * 0.28 : 0;
+  const tempoScale =
+    motionContext !== undefined
+      ? 0.78 + ctxIntensity * 0.28 + (rawSeed > 0 ? (((rawSeed % 251) / 251) - 0.5) * 0.08 : 0)
+      : 0.88;
+
+  // Controlled, weighted real-time phase (~2.7 rad/sec) modulated by contextual tempoScale
   const sec = elapsedSec !== undefined ? elapsedSec : progress * 4.8;
-  const t = sec * Math.PI * 0.88;
+  const t = sec * Math.PI * tempoScale;
 
   // Non-repeating irrational harmonics for organic looseness ("solto mas controlado")
   const PHI = 1.6180339;
   const SQRT2 = 1.4142135;
   const SQRT3 = 1.7320508;
 
-  // Gentle phase offset per beat
-  const beatSeed = beatIndex * 1.15;
-  const oscL = Math.sin(t + beatSeed) * 0.42 + Math.sin(t * PHI * 0.65 + 1.1) * 0.22;
-  const oscR = Math.sin(t * SQRT2 * 0.65 + 2.3 + beatSeed) * 0.42 + Math.cos(t * 0.55) * 0.22;
-  const wristWhipL = Math.sin(t * SQRT3 * 0.6 - 0.6) * 0.22;
-  const wristWhipR = Math.cos(t * PHI * 0.6 - 0.8) * 0.22;
-  const breathe = Math.sin(t * 0.45) * 0.035;
+  // Gentle phase offset per beat + deterministic seedPhaseOffset
+  const beatSeed = beatIndex * 1.15 + seedPhaseOffset;
+  const ampScale = motionContext !== undefined ? 0.68 + ctxIntensity * 0.48 : 1.0;
 
-  // Controlled beat impulse curve
-  const impulse = Math.sin(Math.min(1, beatProgress) * Math.PI) * 0.65;
-  const anticipation = beatProgress < 0.2 ? -Math.sin((beatProgress / 0.2) * Math.PI) * 0.16 : 0;
+  const oscL =
+    (Math.sin(t + beatSeed) * 0.42 + Math.sin(t * PHI * 0.65 + 1.1 + seedAsymmetry) * 0.22) *
+    ampScale;
+  const oscR =
+    (Math.sin(t * SQRT2 * 0.65 + 2.3 + beatSeed) * 0.42 +
+      Math.cos(t * 0.55 - seedAsymmetry) * 0.22) *
+    ampScale;
+  const wristWhipL = Math.sin(t * SQRT3 * 0.6 - 0.6 + seedPhaseOffset * 0.5) * 0.22 * ampScale;
+  const wristWhipR = Math.cos(t * PHI * 0.6 - 0.8 - seedPhaseOffset * 0.5) * 0.22 * ampScale;
+  const breathe = Math.sin(t * 0.45 + seedPhaseOffset * 0.25) * 0.035;
+
+  // Controlled beat impulse curve with anticipation -> action/reaction -> settle envelope
+  const clampedBeatProg = Math.max(0, Math.min(1, beatProgress));
+  const settleEnvelope =
+    clampedBeatProg > 0.75
+      ? 1 - ((clampedBeatProg - 0.75) / 0.25) * (0.35 * ctxSettle)
+      : 1.0;
+  const impulse =
+    Math.sin(clampedBeatProg * Math.PI) * (0.45 + 0.35 * ctxReaction) * settleEnvelope;
+  const anticipation =
+    clampedBeatProg < 0.24
+      ? -Math.sin((clampedBeatProg / 0.24) * Math.PI) * (0.1 + 0.18 * ctxAnticipation)
+      : 0;
 
   const speechBob = isSpeaking
     ? Math.sin(t * 1.8) * 0.08 + Math.cos(t * 2.7) * 0.04
@@ -979,6 +1037,30 @@ export function calculateLimbAngles(
     base.leftArmUpper = 0.65;
     base.leftArmLower = -0.95;
     base.bodyLean = -0.18;
+  }
+
+  // Apply contextual anticipation, reaction, weightShift, and settle modulation when motionContext is supplied
+  if (motionContext !== undefined) {
+    const leanMod = anticipation * 0.45 + ctxWeightShift * 0.08 + seedAsymmetry * 0.2;
+    base.bodyLean = (base.bodyLean + leanMod) * settleEnvelope;
+    base.spineCurve = ((base.spineCurve || 0) + leanMod * 0.65) * settleEnvelope;
+    base.leftArmUpper += (anticipation * 0.28 + seedAsymmetry * 0.35) * settleEnvelope;
+    base.rightArmUpper += (-anticipation * 0.28 - seedAsymmetry * 0.35) * settleEnvelope;
+    base.headTilt = ((base.headTilt || 0) + seedAsymmetry * 0.25 + ctxWeightShift * 0.05) * settleEnvelope;
+
+    // Ground plane guard: prevent non-vehicle / non-fall verticalOffset from pushing feet below groundY
+    const isSeatedOrFall =
+      action === 'drive_car' ||
+      action === 'car_chase' ||
+      action === 'car_drift' ||
+      action === 'car_police' ||
+      action === 'motorcycle' ||
+      action === 'work_computer' ||
+      action === 'dramatic_fall' ||
+      action === 'hero_landing';
+    if (!isSeatedOrFall) {
+      base.verticalOffset = Math.max(-22, Math.min(12, base.verticalOffset));
+    }
   }
 
   return base;

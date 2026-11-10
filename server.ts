@@ -1,7 +1,22 @@
 import express, { Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
+import {
+  buildContextualDirectorFallback,
+  validateAndNormalizeDirectorResponse,
+  VALID_ACTIONS,
+  VALID_CAMERAS,
+  VALID_DRAMATIC_INTENTS,
+  VALID_EMOTIONAL_STATES,
+  VALID_ENVIRONMENTS,
+  VALID_EXPRESSIONS,
+  VALID_FILTERS,
+  VALID_ICONS,
+  VALID_MANEUVERS,
+  VALID_PROPS,
+  VALID_SFX,
+} from './src/utils/cinematicDirector';
 
 dotenv.config();
 
@@ -23,7 +38,7 @@ const getAiClient = () => {
   });
 };
 
-const withTimeout = <T>(promise: Promise<T>, ms = 6000): Promise<T> => {
+const withTimeout = <T>(promise: Promise<T>, ms = 9000): Promise<T> => {
   return Promise.race([
     promise,
     new Promise<T>((_, reject) => setTimeout(() => reject(new Error('AI request timeout')), ms)),
@@ -37,12 +52,11 @@ app.post('/api/ai/generate-captions', async (req: Request, res: Response) => {
     const ai = getAiClient();
 
     if (!ai) {
-      // Offline fallback: Generate realistic default captions
       return res.json({
         captions: [
-          { text: 'Bem-vindo ao NovaCut Studio', startTime: 0.5, duration: 2.5 },
-          { text: 'Edição de vídeo fluida em tempo real', startTime: 3.5, duration: 3.0 },
-          { text: 'Adicione efeitos, filtros e exporte em alta resolução', startTime: 7.0, duration: 3.5 },
+          { text: 'Bem-vindo ao StickStory Studio', startTime: 0.5, duration: 2.5 },
+          { text: 'Direção de cenas animadas em tempo real', startTime: 3.5, duration: 3.0 },
+          { text: 'História, emoção e movimento sincronizados', startTime: 7.0, duration: 3.5 },
         ],
       });
     }
@@ -95,10 +109,10 @@ app.post('/api/ai/generate-storyboard', async (req: Request, res: Response) => {
 Retorne APENAS um JSON no formato:
 {
   "title": "Nome do Projeto",
-  "colorPreset": "teal-orange", // uma de: 'teal-orange', 'vintage', 'noir', 'cyberpunk', 'warm-sunset', 'crisp-clean'
+  "colorPreset": "teal-orange",
   "headline": "Título principal em destaque (max 4 palavras)",
   "subtitle": "Subtítulo explicativo curto",
-  "recommendedMusic": "ambient" // ou 'beat'
+  "recommendedMusic": "ambient"
 }`,
         config: {
           responseMimeType: 'application/json',
@@ -114,145 +128,102 @@ Retorne APENAS um JSON no formato:
   }
 });
 
-// 3. AI Full Script to Video Production Pipeline
+// 3. AI Cinematic Scene Director Pipeline
 app.post('/api/ai/script-to-full-video', async (req: Request, res: Response) => {
+  const { script = '', aspectRatio = '16:9' } = req.body || {};
+  const safeAspectRatio = aspectRatio === '9:16' ? '9:16' : '16:9';
+
   try {
-    const { script, style = 'cinematic', aspectRatio = '16:9' } = req.body;
     const ai = getAiClient();
 
     if (!ai) {
-      // Offline fallback: Generate complete cinematic multi-scene project from script
-      const isStickman = style === 'stickman' || script.toLowerCase().includes('stick') || script.toLowerCase().includes('luta');
-      return res.json({
-        title: isStickman ? 'Batalha Lendária Stickman' : 'Produção Cinematográfica',
-        style: isStickman ? 'stickman' : 'cinematic',
-        aspectRatio,
-        musicGenre: isStickman ? 'beat' : 'ambient',
-        scenes: [
-          {
-            name: 'Ato 1 - O Desafio',
-            visualType: isStickman ? 'stickman-combat' : 'cyber-city',
-            duration: 5,
-            narration: script ? script.slice(0, 100) : 'Dois guerreiros colidem em uma batalha eletrizante.',
-            headline: isStickman ? 'CONFRONTO FINAL' : 'A JORNADA COMEÇA',
-            subtitle: 'Velocidade, poder e determinação',
-            colorPreset: isStickman ? 'cyberpunk' : 'teal-orange',
-            sfx: 'whoosh',
-          },
-          {
-            name: 'Ato 2 - O Clímax',
-            visualType: isStickman ? 'stickman-combat' : 'ocean-waves',
-            duration: 6,
-            narration: script && script.length > 100 ? script.slice(100, 200) : 'A cada golpe desferido, a energia do combate atinge o ápice.',
-            headline: 'PODER MÁXIMO',
-            subtitle: 'Nenhum passo para trás',
-            colorPreset: 'warm-sunset',
-            sfx: 'cut',
-          },
-          {
-            name: 'Ato 3 - O Desfecho',
-            visualType: 'cosmic-aurora',
-            duration: 5,
-            narration: script && script.length > 200 ? script.slice(200, 320) : 'Apenas um sairá vitorioso desta dimensão.',
-            headline: 'VITÓRIA SUPREMA',
-            subtitle: 'Inscreva-se e acompanhe o canal',
-            colorPreset: 'crisp-clean',
-            sfx: 'success',
-          },
-        ],
-      });
+      const fallback = buildContextualDirectorFallback(String(script), safeAspectRatio);
+      return res.json(fallback);
     }
 
     const response = await withTimeout(
       ai.models.generateContent({
         model: 'gemini-3.8-flash',
-        contents: `Você é um diretor e editor de cinema e vídeo profissional.
-O usuário forneceu o seguinte roteiro:
+        contents: `Você é o Diretor Cinematográfico do StickStory Studio.
+Analise a história/roteiro do usuário e dirija uma sequência de 3 a 6 cenas cinematográficas com personagens stick figure estilizados.
+História/Roteiro do usuário:
 """${script}"""
-Estilo desejado: ${style}. Proporção: ${aspectRatio}.
 
-Analise o roteiro e crie a direção completa do vídeo cena a cena.
-As opções de visualType são:
-- "stickman-combat": luta marcial e espadas estilo Alan Becker e Hyun's Dojo
-- "cyber-city": metrópole futurista cyberpunk com pôr do sol
-- "ocean-waves": ondas do mar dramáticas douradas
-- "cosmic-aurora": nebulosa espacial com auroras fluindo
-- "neon-abstract": formas geométricas neon 3D
-- "studio-minimal": estúdio moderno para apresentação tech/corporativa
-
-As opções de colorPreset são: 'teal-orange', 'vintage', 'noir', 'cyberpunk', 'warm-sunset', 'crisp-clean'.
-As opções de sfx são: 'whoosh', 'cut', 'pop', 'success'.
-As opções de musicGenre são: 'ambient', 'beat'.
-
-Retorne APENAS um JSON válido no formato:
-{
-  "title": "Título Criativo do Vídeo",
-  "style": "${style}",
-  "musicGenre": "ambient" ou "beat",
-  "scenes": [
-    {
-      "name": "Nome da Cena",
-      "visualType": "stickman-combat" | "cyber-city" | "ocean-waves" | "cosmic-aurora" | "neon-abstract" | "studio-minimal",
-      "duration": 5, // duração recomendada em segundos (entre 4 e 7)
-      "narration": "Texto exato que o narrador fala nesta cena",
-      "headline": "Título impactante em maiúsculas (max 4 palavras)",
-      "subtitle": "Subtítulo explicativo curto",
-      "colorPreset": "teal-orange",
-      "sfx": "whoosh"
-    }
-  ]
-}`,
+REGRAS DE DIREÇÃO:
+1. NUNCA escolha ações de forma genérica pelo número da cena. Toda ação, expressão, ambiente, câmera e beat deve decorrer do significado dramático e do contexto real daquela cena.
+2. Mantenha continuidade visual do protagonista entre as cenas.
+3. Para cada cena, defina:
+   - dramaticIntent: uma de [${VALID_DRAMATIC_INTENTS.join(', ')}]
+   - emotionalState: uma de [${VALID_EMOTIONAL_STATES.join(', ')}]
+   - action: uma de [${VALID_ACTIONS.join(', ')}]
+   - expression: uma de [${VALID_EXPRESSIONS.join(', ')}]
+   - prop: uma de [${VALID_PROPS.join(', ')}]
+   - environment: uma de [${VALID_ENVIRONMENTS.join(', ')}]
+   - cameraEffect: uma de [${VALID_CAMERAS.join(', ')}]
+   - soundEffect: uma de [${VALID_SFX.join(', ')}]
+   - visualFilter: uma de [${VALID_FILTERS.join(', ')}]
+   - floatingIcon: uma de [${VALID_ICONS.join(', ')}]
+   - beats: 3 a 4 beats temporais por cena cobrindo opening_anticipation, development_action, climax_reaction e settle_recovery, cada um com action, expression, maneuver (uma de [${VALID_MANEUVERS.join(', ')}]), intensity (0.2 a 1.0), anticipation (0.1 a 1.0), reaction (0.1 a 1.0) e settle (0.2 a 1.0).`,
         config: {
           responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              scenes: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    title: { type: Type.STRING },
+                    narration: { type: Type.STRING },
+                    dramaticIntent: { type: Type.STRING },
+                    emotionalState: { type: Type.STRING },
+                    action: { type: Type.STRING },
+                    expression: { type: Type.STRING },
+                    prop: { type: Type.STRING },
+                    environment: { type: Type.STRING },
+                    cameraEffect: { type: Type.STRING },
+                    soundEffect: { type: Type.STRING },
+                    visualFilter: { type: Type.STRING },
+                    floatingIcon: { type: Type.STRING },
+                    beats: {
+                      type: Type.ARRAY,
+                      items: {
+                        type: Type.OBJECT,
+                        properties: {
+                          narrativePhase: { type: Type.STRING },
+                          dramaticIntent: { type: Type.STRING },
+                          spokenSegment: { type: Type.STRING },
+                          action: { type: Type.STRING },
+                          expression: { type: Type.STRING },
+                          maneuver: { type: Type.STRING },
+                          intensity: { type: Type.NUMBER },
+                          anticipation: { type: Type.NUMBER },
+                          reaction: { type: Type.NUMBER },
+                          settle: { type: Type.NUMBER },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
       })
     );
 
-    const data = JSON.parse(response.text || '{}');
-    return res.json(data);
+    const validated = validateAndNormalizeDirectorResponse(
+      response.text || '{}',
+      String(script),
+      safeAspectRatio
+    );
+    return res.json(validated);
   } catch (error) {
-    console.warn('Gemini API call failed, generating procedural storyboard fallback:', error);
-    const { script = '', style = 'cinematic', aspectRatio = '16:9' } = req.body;
-    const isStickman = style === 'stickman' || script.toLowerCase().includes('stick') || script.toLowerCase().includes('luta');
-
-    return res.json({
-      title: isStickman ? 'Batalha Lendária Stickman' : 'Produção Cinematográfica',
-      style: isStickman ? 'stickman' : 'cinematic',
-      aspectRatio,
-      musicGenre: isStickman ? 'beat' : 'ambient',
-      scenes: [
-        {
-          name: 'Ato 1 - O Confronto',
-          visualType: isStickman ? 'stickman-combat' : 'cyber-city',
-          duration: 5,
-          narration: script ? script.slice(0, 80) : 'Dois guerreiros colidem em uma batalha eletrizante.',
-          headline: isStickman ? 'CONFRONTO FINAL' : 'A JORNADA COMEÇA',
-          subtitle: 'Velocidade, poder e determinação',
-          colorPreset: isStickman ? 'cyberpunk' : 'teal-orange',
-          sfx: 'whoosh',
-        },
-        {
-          name: 'Ato 2 - O Clímax',
-          visualType: isStickman ? 'stickman-combat' : 'ocean-waves',
-          duration: 6,
-          narration: script && script.length > 80 ? script.slice(80, 180) : 'A cada golpe desferido, a energia do combate atinge o ápice.',
-          headline: 'PODER MÁXIMO',
-          subtitle: 'Nenhum passo para trás',
-          colorPreset: 'warm-sunset',
-          sfx: 'cut',
-        },
-        {
-          name: 'Ato 3 - O Desfecho',
-          visualType: 'cosmic-aurora',
-          duration: 5,
-          narration: script && script.length > 180 ? script.slice(180, 280) : 'Apenas um sairá vitorioso desta dimensão épica.',
-          headline: 'VITÓRIA SUPREMA',
-          subtitle: 'Inscreva-se e acompanhe o canal',
-          colorPreset: 'crisp-clean',
-          sfx: 'success',
-        },
-      ],
-    });
+    console.warn('Gemini Director call failed, using contextual deterministic fallback:', error);
+    const fallback = buildContextualDirectorFallback(String(script), safeAspectRatio);
+    return res.json(fallback);
   }
 });
 

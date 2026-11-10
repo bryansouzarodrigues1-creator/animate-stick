@@ -13,6 +13,7 @@ import {
   blendLimbAngles,
   calculateCameraTransform,
   getActiveWordIndexAtProgress,
+  MotionVariationContext,
 } from './stickmanMath';
 import { resolveActiveBeatState } from './choreographyEngine';
 
@@ -43,11 +44,12 @@ export function renderStickmanFrame({
   ctx.save();
   const activeCamera = beatState.effectiveCamera || scene.cameraEffect;
   const camera = calculateCameraTransform(activeCamera, sceneProgress);
+  const effectiveZoom = Math.max(0.85, camera.zoom + (beatState.framingZoomOffset || 0));
   const centerX = width / 2;
   const centerY = height / 2;
 
   ctx.translate(centerX + camera.offsetX, centerY + camera.offsetY);
-  ctx.scale(camera.zoom, camera.zoom);
+  ctx.scale(effectiveZoom, effectiveZoom);
   ctx.translate(-centerX, -centerY);
 
   // 1. Draw Rich Background Environment
@@ -102,6 +104,15 @@ export function renderStickmanFrame({
       }
     : undefined;
 
+  const motionCtx1: MotionVariationContext = {
+    seed: beatState.seed,
+    intensity: beatState.intensity,
+    anticipation: beatState.anticipation,
+    reaction: beatState.reaction,
+    settle: beatState.settle,
+    weightShift: beatState.weightShift,
+  };
+
   if (isVehicleAction) {
     // Draw Vehicle with Stickman inside with dynamic lane swerving and nitro
     const vehicleX = width * beatState.char1XNorm;
@@ -119,7 +130,8 @@ export function renderStickmanFrame({
       beatState.maneuver,
       beatState.elapsedInSceneSec,
       beatState.beatProgress,
-      beatState.beatIndex
+      beatState.beatIndex,
+      motionCtx1
     );
 
     // If there is an opponent / police car in scene
@@ -137,7 +149,11 @@ export function renderStickmanFrame({
         'none',
         beatState.elapsedInSceneSec + 0.4,
         beatState.beatProgress,
-        beatState.beatIndex + 1
+        beatState.beatIndex + 1,
+        {
+          ...motionCtx1,
+          seed: beatState.seed + 73,
+        }
       );
     }
   } else {
@@ -160,7 +176,8 @@ export function renderStickmanFrame({
       beatState.beatIndex,
       beatState.prevAction1,
       beatState.transitionBlend,
-      beatState.velocityX
+      beatState.velocityX,
+      motionCtx1
     );
 
     // Optional Character 2
@@ -180,7 +197,18 @@ export function renderStickmanFrame({
         'none',
         beatState.beatProgress,
         beatState.elapsedInSceneSec + 0.5,
-        beatState.beatIndex + 1
+        beatState.beatIndex + 1,
+        undefined,
+        1,
+        0,
+        {
+          seed: beatState.seed + 73,
+          intensity: beatState.intensity,
+          anticipation: beatState.anticipation,
+          reaction: beatState.reaction,
+          settle: beatState.settle,
+          weightShift: -beatState.weightShift,
+        }
       );
     }
 
@@ -1414,7 +1442,8 @@ function drawVehicleWithDriver(
   maneuver: DynamicManeuver = 'none',
   elapsedSec: number = 0,
   beatProgress: number = 0.5,
-  beatIndex: number = 0
+  beatIndex: number = 0,
+  motionContext?: MotionVariationContext
 ) {
   ctx.save();
   ctx.translate(x, groundY);
@@ -1527,7 +1556,11 @@ function drawVehicleWithDriver(
     maneuver,
     beatProgress,
     elapsedSec,
-    beatIndex
+    beatIndex,
+    undefined,
+    1,
+    0,
+    motionContext
   );
 
   // Steering wheel in hands
@@ -1722,7 +1755,8 @@ function drawCharacter(
   beatIndex: number = 0,
   prevAction?: StickmanAction,
   transitionBlend: number = 1,
-  velocityX: number = 0
+  velocityX: number = 0,
+  motionContext?: MotionVariationContext
 ) {
   ctx.save();
   ctx.translate(x, groundY);
@@ -1749,7 +1783,7 @@ function drawCharacter(
   const scale = char.scale || (viewHeight > 700 ? 1.15 : 1.0);
   ctx.scale(scale, scale);
 
-  // Calculate current target limb angles with independent multi-harmonic oscillators
+  // Calculate current target limb angles with independent multi-harmonic oscillators and deterministic motionContext
   const targetAngles = calculateLimbAngles(
     char.action,
     progress,
@@ -1757,7 +1791,8 @@ function drawCharacter(
     elapsedSec,
     beatProgress,
     maneuver,
-    beatIndex
+    beatIndex,
+    motionContext
   );
 
   // Smoothly blend from previous beat's pose during beat transition so limbs flow organically
@@ -1770,7 +1805,8 @@ function drawCharacter(
       elapsedSec,
       1.0,
       'none',
-      Math.max(0, beatIndex - 1)
+      Math.max(0, beatIndex - 1),
+      motionContext
     );
     angles = blendLimbAngles(fromAngles, targetAngles, transitionBlend);
   }

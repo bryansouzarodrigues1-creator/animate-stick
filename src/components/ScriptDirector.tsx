@@ -377,6 +377,17 @@ export const ScriptDirector: React.FC<ScriptDirectorProps> = ({
                 </div>
               </div>
 
+              {/* AI Director Semantic Plan Readout (Read-Only when present) */}
+              {scene.scenePlan && (
+                <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[10px] font-mono bg-indigo-950/50 border border-indigo-500/30 rounded-lg px-2 py-1 text-indigo-200">
+                  <span>🎯 Intenção: {scene.scenePlan.dramaticIntent}</span>
+                  <span className="text-slate-500">•</span>
+                  <span>🎭 Emoção: {scene.scenePlan.emotionalState}</span>
+                  <span className="text-slate-500">•</span>
+                  <span className="text-cyan-300">Seed #{scene.scenePlan.sceneSeed % 10000}</span>
+                </div>
+              )}
+
               {/* Spoken Narration Textarea */}
               <div className="mb-2.5">
                 <div className="flex items-center justify-between mb-1">
@@ -407,6 +418,7 @@ export const ScriptDirector: React.FC<ScriptDirectorProps> = ({
                     onUpdateScene(idx, {
                       narration: e.target.value,
                       choreography: undefined,
+                      scenePlan: undefined,
                     })
                   }
                   placeholder="Escreva a fala exata narrada nesta cena..."

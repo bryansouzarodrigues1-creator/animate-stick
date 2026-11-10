@@ -7,7 +7,14 @@ import {
   SceneCharacter,
   CameraEffect,
   FloatingVfxIcon,
+  NarrativeBeatPhase,
 } from '../types/stickman';
+import {
+  computeDeterministicSeed,
+  convertBeatPlansToChoreography,
+  inferContextFromText,
+  seededUnitFloat,
+} from './cinematicDirector';
 
 export interface ActiveBeatFrameState {
   beatIndex: number;
@@ -31,6 +38,13 @@ export interface ActiveBeatFrameState {
   maneuver: DynamicManeuver;
   effectiveCamera: CameraEffect;
   effectiveIcon: FloatingVfxIcon;
+  seed: number;
+  intensity: number;
+  anticipation: number;
+  reaction: number;
+  settle: number;
+  weightShift: number;
+  framingZoomOffset: number;
 }
 
 interface ChoreographyVariation {
@@ -442,6 +456,17 @@ const TRILLIONAIRE_VARIATIONS: ChoreographyVariation[] = [
  */
 export function generateChoreographyForScene(scene: StickmanScene): ChoreographyBeat[] {
   const dur = Math.max(2, scene.duration || 4.5);
+
+  // If the scene carries a validated CinematicScenePlan with beats, consume them directly
+  if (scene.scenePlan && Array.isArray(scene.scenePlan.beats) && scene.scenePlan.beats.length > 0) {
+    return convertBeatPlansToChoreography(
+      scene.id,
+      dur,
+      scene.scenePlan.beats,
+      scene.character1.action
+    );
+  }
+
   const rawText = (scene.narration || '').trim();
   const words = rawText.length > 0 ? rawText.split(/\s+/) : ['Ação', 'em', 'movimento'];
 
@@ -489,15 +514,25 @@ export function generateChoreographyForScene(scene: StickmanScene): Choreography
     scene.environment === 'japanese_dojo';
 
   const beats: ChoreographyBeat[] = [];
-  let prevX = scene.character2 ? 0.36 : 0.34;
+  const entryRefX = scene.scenePlan?.characters?.[0]?.entryNormalizedX;
+  let prevX = entryRefX ?? (scene.character2 ? 0.36 : 0.34);
   let prevChar2X = 0.68;
   let prevAction: StickmanAction = baseAction;
   let prevManeuver: DynamicManeuver = 'none';
   let prevLabel = '';
 
-  const sceneHash = scene.id
-    .split('')
-    .reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
+  const baseSceneSeed =
+    scene.seed ??
+    scene.scenePlan?.sceneSeed ??
+    computeDeterministicSeed(
+      `${scene.id}:${scene.title}:${scene.narration}:${scene.environment}:${scene.character1.action}:${scene.character1.expression}`
+    );
+
+  const inferredCtx = inferContextFromText(scene.narration, scene.title, baseSceneSeed);
+
+  const sceneHash =
+    scene.id.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0) +
+    (baseSceneSeed % 97);
 
   for (let idx = 0; idx < totalChunks; idx++) {
     const startTime = Math.round(idx * beatDur * 100) / 100;
@@ -642,10 +677,29 @@ export function generateChoreographyForScene(scene: StickmanScene): Choreography
       ? 'sword_duel'
       : 'fight_kungfu';
 
+    const relStart = Math.round((idx / totalChunks) * 1000) / 1000;
+    const relEnd =
+      idx === totalChunks - 1 ? 1.0 : Math.round(((idx + 1) / totalChunks) * 1000) / 1000;
+    const narrativePhase: NarrativeBeatPhase =
+      idx === 0
+        ? 'opening_anticipation'
+        : idx === totalChunks - 1
+        ? 'settle_recovery'
+        : idx === Math.floor(totalChunks * 0.65)
+        ? 'climax_reaction'
+        : 'development_action';
+
+    const beatSeed = computeDeterministicSeed(`${scene.id}_beat_${idx}`, baseSceneSeed + idx * 31);
+    const seedJitter = (seededUnitFloat(beatSeed, 1) - 0.5) * 0.12;
+
     beats.push({
       id: `${scene.id}_beat_${idx}`,
       startTime,
       endTime,
+      relStart,
+      relEnd,
+      narrativePhase,
+      dramaticIntent: `${inferredCtx.dramaticIntent}:${narrativePhase}`,
       label: candidate.lbl,
       spokenText: snippet,
       action: candidate.act,
@@ -661,6 +715,12 @@ export function generateChoreographyForScene(scene: StickmanScene): Choreography
       maneuver: candidate.man,
       cameraEffect: candidate.cam,
       floatingIcon: candidate.ico !== 'none' ? candidate.ico : scene.floatingIcon || 'none',
+      intensity: Math.max(0.18, Math.min(1.0, inferredCtx.baseIntensity + seedJitter)),
+      anticipation: Math.max(0.1, Math.min(1.0, inferredCtx.baseAnticipation + seedJitter)),
+      reaction: Math.max(0.1, Math.min(1.0, inferredCtx.baseReaction + seedJitter)),
+      settle: Math.max(0.15, Math.min(1.0, inferredCtx.baseSettle)),
+      weightShift: Math.max(-1, Math.min(1, (targetX - prevX) * 4)),
+      seed: beatSeed,
       timeRange: `${startTime.toFixed(1)}s - ${endTime.toFixed(1)}s`,
       words: snippet,
     });
@@ -684,7 +744,8 @@ export function resolveActiveBeatState(
   sceneProgress: number
 ): ActiveBeatFrameState {
   const dur = Math.max(1, scene.duration || 4.5);
-  const elapsedInSceneSec = Math.max(0, Math.min(dur, sceneProgress * dur));
+  const clampedProgress = Math.max(0, Math.min(1, sceneProgress));
+  const elapsedInSceneSec = clampedProgress * dur;
 
   const beats =
     scene.choreography && scene.choreography.length > 0
@@ -733,6 +794,24 @@ export function resolveActiveBeatState(
   const flipChar1 = isVehicle ? false : dx < -0.05;
   const flipChar2 = isVehicle ? false : true;
 
+  const fallbackSceneSeed =
+    scene.seed ??
+    scene.scenePlan?.sceneSeed ??
+    computeDeterministicSeed(
+      `${scene.id}:${scene.title}:${scene.narration}:${scene.environment}:${scene.character1.action}:${scene.character1.expression}`
+    );
+
+  const effectiveSeed =
+    beat.seed ?? computeDeterministicSeed(`${scene.id}_beat_${activeIndex}`, fallbackSceneSeed);
+
+  const framing = scene.scenePlan?.cameraPlan?.framing;
+  const framingZoomOffset =
+    framing === 'close_dramatic'
+      ? 0.1
+      : framing === 'wide_establishing'
+      ? -0.05
+      : 0;
+
   return {
     beatIndex: activeIndex,
     totalBeats: beats.length,
@@ -755,5 +834,12 @@ export function resolveActiveBeatState(
     maneuver: beat.maneuver,
     effectiveCamera: beat.cameraEffect || scene.cameraEffect,
     effectiveIcon: beat.floatingIcon || scene.floatingIcon || 'none',
+    seed: effectiveSeed,
+    intensity: beat.intensity ?? 0.68,
+    anticipation: beat.anticipation ?? 0.42,
+    reaction: beat.reaction ?? 0.5,
+    settle: beat.settle ?? 0.5,
+    weightShift: beat.weightShift ?? 0,
+    framingZoomOffset,
   };
 }

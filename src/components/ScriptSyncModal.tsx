@@ -10,7 +10,11 @@ import {
   Bot,
   Loader2,
 } from 'lucide-react';
-import { StickmanProject, StickmanScene } from '../types/stickman';
+import { StickmanProject } from '../types/stickman';
+import {
+  buildContextualDirectorFallback,
+  validateAndNormalizeDirectorResponse,
+} from '../utils/cinematicDirector';
 
 interface ScriptSyncModalProps {
   isOpen: boolean;
@@ -67,7 +71,17 @@ export const ScriptSyncModal: React.FC<ScriptSyncModalProps> = ({
       try {
         const parsed = JSON.parse(event.target?.result as string);
         if (parsed.scenes && Array.isArray(parsed.scenes)) {
-          onLoadProject(parsed);
+          const normalized = validateAndNormalizeDirectorResponse(
+            parsed,
+            parsed.title || '',
+            project.aspectRatio
+          );
+          onLoadProject({
+            ...project,
+            ...parsed,
+            title: normalized.title || parsed.title || project.title,
+            scenes: normalized.scenes,
+          });
           onClose();
         } else {
           setImportError('O arquivo JSON não contém um array de "scenes" válido.');
@@ -82,7 +96,6 @@ export const ScriptSyncModal: React.FC<ScriptSyncModalProps> = ({
   const handleApplyPastedJson = () => {
     setImportError(null);
     try {
-      // Clean up markdown block if pasted from chat
       let clean = importJsonText.trim();
       if (clean.startsWith('```json')) {
         clean = clean.replace(/^```json/, '').replace(/```$/, '').trim();
@@ -91,24 +104,28 @@ export const ScriptSyncModal: React.FC<ScriptSyncModalProps> = ({
       }
 
       const parsed = JSON.parse(clean);
-      if (parsed.scenes && Array.isArray(parsed.scenes)) {
-        onLoadProject(parsed);
-        onClose();
-      } else if (Array.isArray(parsed)) {
+      if ((parsed.scenes && Array.isArray(parsed.scenes)) || Array.isArray(parsed)) {
+        const normalized = validateAndNormalizeDirectorResponse(
+          parsed,
+          parsed.title || '',
+          project.aspectRatio
+        );
         onLoadProject({
           ...project,
-          scenes: parsed as StickmanScene[],
+          ...(Array.isArray(parsed) ? {} : parsed),
+          title: normalized.title || project.title,
+          scenes: normalized.scenes,
         });
         onClose();
       } else {
         setImportError('Estrutura inválida. O JSON deve ter um campo "scenes".');
       }
-    } catch (err) {
+    } catch {
       setImportError('JSON inválido. Verifique se copiou todo o bloco de código do chat.');
     }
   };
 
-  // Generate with Gemini 3.8 Flash
+  // Generate with Gemini 3.8 Flash Cinematic Director
   const handleGenerateAi = async () => {
     if (!aiPrompt.trim()) return;
     setIsGeneratingAi(true);
@@ -128,60 +145,27 @@ export const ScriptSyncModal: React.FC<ScriptSyncModalProps> = ({
       if (!res.ok) throw new Error('Falha na resposta do servidor');
       const data = await res.json();
 
-      if (data.scenes && Array.isArray(data.scenes)) {
-        // Map backend scenes to full StickmanScene structure
-        const mappedScenes: StickmanScene[] = data.scenes.map(
-          (s: any, idx: number) => ({
-            id: `ai_${idx}_${Date.now()}`,
-            title: s.name || `Cena ${idx + 1}`,
-            duration: s.duration || 4.5,
-            narration: s.narration || aiPrompt.slice(0, 80),
-            character1: {
-              name: 'Stickman 1',
-              color: '#0284C7',
-              action:
-                idx === 1
-                  ? 'fight_kungfu'
-                  : idx === 2
-                  ? 'money_celebrate'
-                  : 'talk_explaining',
-              expression: idx === 1 ? 'angry' : 'talking',
-              prop: idx === 2 ? 'money' : 'none',
-              position: 'center',
-            },
-            character2:
-              idx === 1
-                ? {
-                    name: 'Rival',
-                    color: '#DC2626',
-                    action: 'fight_kungfu',
-                    expression: 'angry',
-                    prop: 'none',
-                    position: 'right',
-                  }
-                : undefined,
-            environment:
-              idx === 1
-                ? 'japanese_dojo'
-                : idx === 2
-                ? 'money_vault'
-                : 'sketch_grid',
-            cameraEffect: idx === 1 ? 'shake' : 'zoom_in',
-            soundEffect: idx === 1 ? 'punch' : idx === 2 ? 'cash_register' : 'whoosh',
-            highlightWords: s.headline ? s.headline.split(' ') : undefined,
-          })
-        );
+      const directed = validateAndNormalizeDirectorResponse(
+        data,
+        aiPrompt,
+        project.aspectRatio
+      );
 
-        onLoadProject({
-          ...project,
-          title: data.title || 'Animação Stickman Gerada',
-          scenes: mappedScenes,
-        });
-        onClose();
-      }
+      onLoadProject({
+        ...project,
+        title: directed.title || 'Animação Stickman Gerada',
+        scenes: directed.scenes,
+      });
+      onClose();
     } catch (err) {
       console.error(err);
-      setAiError('Erro ao gerar com IA. Tente novamente ou use os modelos prontos.');
+      const fallback = buildContextualDirectorFallback(aiPrompt, project.aspectRatio);
+      onLoadProject({
+        ...project,
+        title: fallback.title,
+        scenes: fallback.scenes,
+      });
+      onClose();
     } finally {
       setIsGeneratingAi(false);
     }
