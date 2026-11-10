@@ -33,6 +33,7 @@ export const ExportVideoModal: React.FC<ExportVideoModalProps> = ({
   const [progress, setProgress] = useState(0);
   const [currentSceneTitle, setCurrentSceneTitle] = useState<string>('');
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  const [downloadExtension, setDownloadExtension] = useState<'mp4' | 'webm'>('mp4');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const exporterRef = useRef<VideoExportManager | null>(null);
 
@@ -44,7 +45,7 @@ export const ExportVideoModal: React.FC<ExportVideoModalProps> = ({
   const activeDuration = exportScope === 'scene' ? sceneDuration : fullDuration;
   const activeDurationMs = Math.round(activeDuration * 1000);
 
-  const triggerBrowserDownload = (url: string) => {
+  const triggerBrowserDownload = (url: string, extension: 'mp4' | 'webm' = downloadExtension) => {
     const a = document.createElement('a');
     a.href = url;
     const baseName =
@@ -57,7 +58,7 @@ export const ExportVideoModal: React.FC<ExportVideoModalProps> = ({
       .replace(/[\u0300-\u036f]/g, '')
       .replace(/[^a-z0-9]+/g, '_')
       .replace(/^_+|_+$/g, '');
-    a.download = `${cleanSlug || 'video_stickman'}.mp4`;
+    a.download = `${cleanSlug || 'video_stickman'}.${extension}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -87,11 +88,13 @@ export const ExportVideoModal: React.FC<ExportVideoModalProps> = ({
         setProgress(pct);
         if (sceneTitle) setCurrentSceneTitle(sceneTitle);
       },
-      onComplete: (_blob, url) => {
+      onComplete: (_blob, url, mimeType) => {
         setIsRecording(false);
         setProgress(100);
         setDownloadUrl(url);
-        triggerBrowserDownload(url);
+        const extension = mimeType.startsWith('video/mp4') ? 'mp4' : 'webm';
+        setDownloadExtension(extension);
+        triggerBrowserDownload(url, extension);
       },
       onError: (err) => {
         setIsRecording(false);
@@ -119,7 +122,7 @@ export const ExportVideoModal: React.FC<ExportVideoModalProps> = ({
           <div className="flex items-center gap-2">
             <Video className="w-5 h-5 text-emerald-400" />
             <h3 className="text-base font-bold text-slate-100">
-              Baixar Vídeo em MP4 (60 FPS)
+              Baixar Vídeo (MP4/WebM)
             </h3>
           </div>
           <button
