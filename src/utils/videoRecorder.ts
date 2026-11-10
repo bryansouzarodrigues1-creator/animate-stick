@@ -25,7 +25,7 @@ export function getBestSupportedVideoMimeType(): { mimeType: string; extension: 
   if (typeof MediaRecorder !== 'undefined') {
     for (const candidate of mp4Candidates) {
       if (MediaRecorder.isTypeSupported(candidate)) {
-        return { mimeType: candidate, extension: 'webm' };
+        return { mimeType: candidate, extension: 'mp4' };
       }
     }
 
@@ -37,7 +37,7 @@ export function getBestSupportedVideoMimeType(): { mimeType: string; extension: 
     ];
     for (const candidate of webmCandidates) {
       if (MediaRecorder.isTypeSupported(candidate)) {
-        return { mimeType: candidate, extension: 'mp4' };
+        return { mimeType: candidate, extension: 'webm' };
       }
     }
   }
