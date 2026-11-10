@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import dotenv from 'dotenv';
+import { validateUniversalWorldPlan, UNIVERSAL_ASSET_STARTER_PACK } from './src/utils/universalSceneWorld';
 import {
   buildContextualDirectorFallback,
   validateAndNormalizeDirectorResponse,
@@ -44,6 +45,55 @@ const withTimeout = <T>(promise: Promise<T>, ms = 9000): Promise<T> => {
     new Promise<T>((_, reject) => setTimeout(() => reject(new Error('AI request timeout')), ms)),
   ]);
 };
+
+
+// Universal scene graph: model/provider-neutral validation and planning.
+app.post('/api/scene-world/validate', (req: Request, res: Response) => {
+  const result = validateUniversalWorldPlan(req.body?.plan ?? req.body);
+  return res.status(result.valid ? 200 : 422).json(result);
+});
+
+app.post('/api/ai/scene-world-plan', async (req: Request, res: Response) => {
+  const prompt = String(req.body?.prompt || '').trim();
+  const duration = Math.max(2, Math.min(90, Number(req.body?.duration) || 8));
+  if (!prompt) return res.status(400).json({ error: 'prompt is required' });
+
+  const ai = getAiClient();
+  if (!ai) return res.status(503).json({
+    error: 'GEMINI_API_KEY is not configured',
+    hint: 'Any AI provider can call /api/scene-world/validate with a UniversalWorldPlan JSON object.',
+  });
+
+  try {
+    const response = await withTimeout(ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: `Create a renderer-neutral 3D scene graph for this request: "${prompt}".
+Duration: ${duration} seconds. Output ONLY valid JSON, no markdown.
+This schema is provider-neutral and must not use renderer-specific code, scripts, shaders, URLs, or arbitrary component names.
+Coordinate system: meters, Y-up. Include a coherent environment, all visible set pieces, characters, props, explicit physical interactions, and cinematic shots.
+Do not assume a military scene. Build the requested location from semantic assets; use assetKey strings such as kitchen.counter, street.road, school.desk, sports.hoop, nature.tree, vehicle.car.
+Every entity needs unique id, kind, assetKey, label, transform {position{x,y,z},rotation{x,y,z},scale{x,y,z}}.
+Kinds: character, prop, architecture, nature, vehicle, terrain, light, vfx, decoration.
+Interactions use actorId, targetId, verb, start, end, contactPoint, intent. Verbs: walk_to, look_at, reach, grab, release, carry, push, pull, open, close, sit, stand, climb, jump_to, throw, hand_over, use, custom.
+Shots use start, end, type, subjectIds, movement. Shot types: establishing, wide, medium, close_up, over_shoulder, tracking, low_angle, high_angle.
+Return this shape:
+{ "schemaVersion":"1.0", "sceneId":"...", "duration":${duration},
+"environment":{"description":"...","locationType":"...","visualStyle":"stylized_3d","timeOfDay":"...","weather":"...","lightingMood":"...","ground":"..."},
+"entities":[...], "interactions":[...], "shots":[...], "notes":[] }
+Important: at least one character, structural/environment objects, and meaningful interactions when the story requires contact.`,
+      config: { responseMimeType: 'application/json' },
+    }), 25000);
+
+    let parsed: unknown;
+    try { parsed = JSON.parse(response.text || '{}'); }
+    catch { return res.status(502).json({ error: 'AI returned invalid JSON', raw: response.text || '' }); }
+    const result = validateUniversalWorldPlan(parsed);
+    return res.status(result.valid ? 200 : 422).json(result);
+  } catch (error) {
+    console.error('Universal scene planning failed:', error);
+    return res.status(502).json({ error: 'Scene planning failed', details: String(error) });
+  }
+});
 
 // 1. AI Auto-Captions / Script Generator
 app.post('/api/ai/generate-captions', async (req: Request, res: Response) => {
